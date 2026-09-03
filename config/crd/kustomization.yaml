@@ -7,8 +7,6 @@ resources:
 - bases/paas.example.com_grafanainstances.yaml
 - bases/paas.example.com_mariadbclusters.yaml
 - bases/paas.example.com_rabbitmqclusters.yaml
-- bases/paas.example.com_apigateways.yaml
-- bases/paas.example.com_apigatewaybackends.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

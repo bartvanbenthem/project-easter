@@ -10,13 +10,10 @@ opinionated ones of our own. Each vendor gets its own thin CRD under
 [grafana/grafana-operator](https://github.com/grafana/grafana-operator)),
 `MariaDBCluster` (for
 [mariadb-operator](https://github.com/mariadb-operator/mariadb-operator)),
-`RabbitMQCluster` (for the [RabbitMQ Cluster
-Operator](https://github.com/rabbitmq/cluster-operator)), and
-`APIGateway`/`APIGatewayBackend` (for the standard [Kubernetes Gateway
-API](https://gateway-api.sigs.k8s.io) as implemented by
-[kgateway](https://github.com/kgateway-dev/kgateway)) — reconciled into a
+and `RabbitMQCluster` (for the [RabbitMQ Cluster
+Operator](https://github.com/rabbitmq/cluster-operator)) — reconciled into a
 full vendor object, so consumers get a working
-Postgres/Valkey/Grafana/MariaDB/RabbitMQ/API-gateway instance from ~10 lines
+Postgres/Valkey/Grafana/MariaDB/RabbitMQ instance from ~10 lines
 of YAML instead of having to understand the vendor's much larger spec.
 
 ```yaml
@@ -71,25 +68,6 @@ spec:
   replicas: 3
   storage:
     size: 10Gi
----
-apiVersion: paas.example.com/v1alpha1
-kind: APIGateway
-metadata:
-  name: example-gateway
-spec:
-  listeners:
-    - name: http
-      port: 80
-      protocol: HTTP
----
-apiVersion: paas.example.com/v1alpha1
-kind: APIGatewayBackend
-metadata:
-  name: example-other-cluster-svc
-spec:
-  hosts:
-    - host: svc.other-cluster.example.com
-      port: 443
 ```
 
 ## How it works
@@ -107,40 +85,32 @@ type means writing the adapter, not another copy of the reconcile loop.
   interface — this is the one place the actual CRUD/reconciliation logic
   lives.
 - `internal/cnpg/cnpg.go`, `internal/valkey/valkey.go`,
-  `internal/grafana/grafana.go`, `internal/mariadb/mariadb.go`,
-  `internal/rabbitmq/rabbitmq.go`, and `internal/kgateway/` (`gateway.go` +
-  `backend.go`) — one `Adapter` implementation per vendor object: the target
-  `GroupVersionKind`, how to build the desired vendor object from our CR's
-  spec, and how to read phase/readiness back out of its status.
-  `internal/kgateway` is the one package with two: `GatewayAdapter` (for
-  `APIGateway`) and `BackendAdapter` (for `APIGatewayBackend`) are two
-  halves of one integration, not two vendors — see the package doc comment.
-  None of the vendors' Go API types or CRD schemas are vendored — we don't
-  own those CRDs, and their schemas are large and version-specific (see
+  `internal/grafana/grafana.go`, `internal/mariadb/mariadb.go`, and
+  `internal/rabbitmq/rabbitmq.go` — one `Adapter` implementation per vendor
+  object: the target `GroupVersionKind`, how to build the desired vendor
+  object from our CR's spec, and how to read phase/readiness back out of its
+  status. None of the vendors' Go API types or CRD schemas are vendored — we
+  don't own those CRDs, and their schemas are large and version-specific (see
   `crd-cnpg-v1.30.0.yaml`, `crd-valkey-v0.6.0.yaml`,
-  `crd-grafana-v5.25.0.yaml`, `crd-mariadb-operator-v26.6.0.yaml`,
-  `crd-rabbitmq-cluster-operator-v2.22.5.yaml`, `crd-gateway-api-v1.6.1.yaml`,
-  and `crd-kgateway-v2.4.4.yaml` at the repo root). Instead the target is
-  addressed purely through controller-runtime's dynamic client
+  `crd-grafana-v5.25.0.yaml`, `crd-mariadb-operator-v26.6.0.yaml`, and
+  `crd-rabbitmq-cluster-operator-v2.22.5.yaml` at the repo root). Instead the
+  target is addressed purely through controller-runtime's dynamic client
   (`unstructured.Unstructured` + a `schema.GroupVersionKind`), and the
   desired object is built as a plain `map[string]any` applied via
   Server-Side Apply (`client.Patch(ctx, obj, client.Apply, ...)`). This keeps
   the operator decoupled from any one vendor version.
 - `api/v1alpha1/postgrescluster_types.go` / `valkeycluster_types.go` /
   `grafanainstance_types.go` / `mariadbcluster_types.go` /
-  `rabbitmqcluster_types.go` / `apigateway_types.go` /
-  `apigatewaybackend_types.go` — our own CRDs, scaffolded and generated the
+  `rabbitmqcluster_types.go` — our own CRDs, scaffolded and generated the
   normal kubebuilder way (`+kubebuilder:validation`/`+kubebuilder:printcolumn`
   markers, `controller-gen` for the CRD YAML and deepcopy code).
 - `internal/controller/postgrescluster_controller.go` /
   `valkeycluster_controller.go` / `grafanainstance_controller.go` /
-  `mariadbcluster_controller.go` / `rabbitmqcluster_controller.go` /
-  `apigateway_controller.go` / `apigatewaybackend_controller.go` — a few
+  `mariadbcluster_controller.go` / `rabbitmqcluster_controller.go` — a few
   lines each: they just instantiate `GenericReconciler` with the matching
   adapter (`cnpg.Adapter{}` / `valkey.Adapter{}` / `grafana.Adapter{}` /
-  `mariadb.Adapter{}` / `rabbitmq.Adapter{}` / `kgateway.GatewayAdapter{}` /
-  `kgateway.BackendAdapter{}`) and register it with the manager. RBAC
-  markers for both our own CRD and the vendor's live here.
+  `mariadb.Adapter{}` / `rabbitmq.Adapter{}`) and register it with the
+  manager. RBAC markers for both our own CRD and the vendor's live here.
 - One paas CR maps to exactly one same-named vendor object. On delete, the
   operator removes the vendor object before releasing its own finalizer, so
   e.g. `kubectl delete postgrescluster` also tears down the database.
@@ -151,19 +121,10 @@ type means writing the adapter, not another copy of the reconcile loop.
   would remove the poll delay, if it's ever worth the complexity.
 - `internal/controller/testdata/crd/postgresql.cnpg.io_clusters.yaml`,
   `valkey.io_valkeyclusters.yaml`, `grafana.integreatly.org_grafanas.yaml`,
-  `k8s.mariadb.com_mariadbs.yaml`, `rabbitmq.com_rabbitmqclusters.yaml`,
-  `gateway.networking.k8s.io_gateways.yaml`, and
-  `gateway.kgateway.dev_backends.yaml` are the real vendor CRDs, loaded into
-  `envtest` so the controller tests validate the generated objects against
-  each vendor's actual OpenAPI schema — not just against our own assumptions
-  about its shape.
-- `APIGateway`/`APIGatewayBackend` is the one integration that isn't a
-  single paas-CRD-to-single-vendor-object mapping: it's two thin CRDs for
-  two vendor objects that are two halves of one capability (a gateway
-  entrypoint, and a way to route it to something outside the cluster). Each
-  half is still the same one-CR-to-one-object shape individually --
-  `GenericReconciler` doesn't know or care that there happen to be two of
-  them wired to the same package.
+  `k8s.mariadb.com_mariadbs.yaml`, and `rabbitmq.com_rabbitmqclusters.yaml`
+  are the real vendor CRDs, loaded into `envtest` so the controller tests
+  validate the generated objects against each vendor's actual OpenAPI
+  schema — not just against our own assumptions about its shape.
 
 ### Adding another vendor integration
 
@@ -203,13 +164,7 @@ synchronous multi-primary replication); `RabbitMQCluster` exposes `replicas`,
 `image`, `storage.size`, `storage.storageClass`, and optional `resources`
 (no bootstrap-database equivalent — the RabbitMQ Cluster Operator always
 creates a default vhost and user itself, writing credentials to a
-`<name>-default-user` Secret it manages); `APIGateway` exposes
-`gatewayClassName` (defaults to `kgateway`) and `listeners[]`
-(`name`/`port`/`protocol`/`hostname`/`tlsSecretName`); `APIGatewayBackend`
-exposes `hosts[]` (`host`/`port`) and `appProtocol` — only kgateway's
-"static" Backend type (a set of bare host:port endpoints, which is what
-makes an out-of-cluster target reachable at all) is exposed; its
-AWS/GCP/dynamic-forward-proxy/priority-group Backend types are not. All
+`<name>-default-user` Secret it manages). All
 `resources` fields reuse `corev1.ResourceRequirements` directly, except
 `GrafanaInstance`, which doesn't expose one: the real field lives deep
 inside `spec.deployment.spec.template.spec.containers[].resources` (keyed by
@@ -220,9 +175,8 @@ monitoring, affinity, pooling, superuser secret, etc.; Valkey's TLS, ACLs,
 exporter, pod disruption budget, etc.; Grafana's ingress/route, SMTP,
 plugins, jsonnet, service accounts, etc.; mariadb-operator's TLS,
 replication (non-Galera), MaxScale, backups, etc.; the RabbitMQ Cluster
-Operator's TLS, plugins, definitions import, affinity, etc.; Gateway's
-addresses/infrastructure/allowedListeners; kgateway's TrafficPolicy,
-BackendConfigPolicy, etc.) is left at that vendor's own defaults. Extending
+Operator's TLS, plugins, definitions import, affinity, etc.) is left at
+that vendor's own defaults. Extending
 a mapping means adding a field to the CR's `*Spec` type in `api/v1alpha1/`,
 running `make manifests generate`, and threading it through that vendor's
 `BuildManifest` in `internal/<vendor>/`.
@@ -239,56 +193,41 @@ Notes on what's deliberately out of scope:
 - mariadb-operator also defines `Backup`/`Restore`/`Connection`/`Database`/
   `User`/`Grant`/`MaxScale` CRDs; this operator only targets `MariaDB`
   itself, the actual cluster.
-- Gateway API's own `HTTPRoute`/`GRPCRoute`/`TCPRoute`/`ReferenceGrant`, and
-  kgateway's `TrafficPolicy`/`BackendConfigPolicy`/`DirectResponse`/
-  `GatewayExtension`/`GatewayParameters`, are all routing/policy config, not
-  "an instance" of anything — write those directly against the vendor CRDs,
-  the same way this operator leaves CNPG's `Pooler`/`Backup` or
-  mariadb-operator's `Database`/`User` alone. See the
-  `paas_v1alpha1_apigatewaybackend.yaml` sample for a worked `HTTPRoute`
-  example.
 
 ## Verified while building this
 
 `go build`, `go vet`, `make manifests`/`generate` (regenerates CRD YAML +
 deepcopy code via `controller-gen`), `make lint` (golangci-lint, 0 issues),
 and `make test` (a real `envtest` API server, with our CRDs and CNPG's,
-valkey-operator's, grafana-operator's, mariadb-operator's, the RabbitMQ
-Cluster Operator's, and the standard Gateway API's/kgateway's actual CRDs
-all loaded — see above) all pass; all seven controller tests exercise
-finalizer-add, Server-Side Apply of the generated vendor object, and the
-status-mirroring logic end to end. Not run: anything against a live cluster
-with CNPG, valkey-operator, grafana-operator, mariadb-operator, the RabbitMQ
-Cluster Operator, or kgateway actually installed and reconciling — do that
-before trusting this in anything real (the Grafana mapping in particular is
-untested against a live grafana-operator: the `deployment.spec.replicas` and
-`persistentVolumeClaim` paths are correct per its CRD schema, but its actual
-reconciliation behavior hasn't been exercised end to end; same caveat for
-`MariaDBCluster`/`RabbitMQCluster`/`APIGateway`/`APIGatewayBackend` against a
-live mariadb-operator/RabbitMQ Cluster Operator/kgateway — in particular,
-`APIGateway`'s `allowedRoutes.namespaces.from: All` override and
-`APIGatewayBackend`'s HTTPRoute binding are correct per the Gateway
-API/kgateway CRD schemas but haven't been exercised against a real data
-plane).
+valkey-operator's, grafana-operator's, mariadb-operator's, and the RabbitMQ
+Cluster Operator's actual CRDs all loaded — see above) all pass; all five
+controller tests exercise finalizer-add, Server-Side Apply of the generated
+vendor object, and the status-mirroring logic end to end. Not run: anything
+against a live cluster with CNPG, valkey-operator, grafana-operator,
+mariadb-operator, or the RabbitMQ Cluster Operator actually installed and
+reconciling — do that before trusting this in anything real (the Grafana
+mapping in particular is untested against a live grafana-operator: the
+`deployment.spec.replicas` and `persistentVolumeClaim` paths are correct
+per its CRD schema, but its actual reconciliation behavior hasn't been
+exercised end to end; same caveat for `MariaDBCluster`/`RabbitMQCluster`
+against a live mariadb-operator/RabbitMQ Cluster Operator).
 
 ## Installing the Dependency Operators
 
 paas-operator only ever talks to the vendor CRDs (CNPG's `Cluster`,
 valkey-operator's `ValkeyCluster`, grafana-operator's `Grafana`,
 mariadb-operator's `MariaDB`, the RabbitMQ Cluster Operator's
-`RabbitmqCluster`, the standard Gateway API's `Gateway`, kgateway's
-`Backend`) via Server-Side Apply — it never installs the vendor operators
-themselves. Each one has to be running in the cluster *before* paas-operator
-can reconcile anything, otherwise `BuildManifest`'s Server-Side Apply calls
-fail because the target CRD doesn't exist yet. Most ship a Helm chart; the
-RabbitMQ Cluster Operator and the base Gateway API CRDs ship a plain
-manifest instead (their own recommended install path). That's the preferred
-route for each below.
+`RabbitmqCluster`) via Server-Side Apply — it never installs the vendor
+operators themselves. Each one has to be running in the cluster *before*
+paas-operator can reconcile anything, otherwise `BuildManifest`'s
+Server-Side Apply calls fail because the target CRD doesn't exist yet. Most
+ship a Helm chart; the RabbitMQ Cluster Operator ships a plain manifest
+instead (its own recommended install path). That's the preferred route for
+each below.
 
-Install order doesn't matter between them (none depend on each other, except
-kgateway which needs the Gateway API CRDs installed first — noted below) —
-just make sure whichever ones you actually plan to create CRs for are up
-before applying `config/samples/` or your own CRs.
+Install order doesn't matter between them (none depend on each other) — just
+make sure whichever ones you actually plan to create CRs for are up before
+applying `config/samples/` or your own CRs.
 
 ### CloudNativePG (for `PostgresCluster`)
 
@@ -408,47 +347,12 @@ project's own recommended install path.
 this operator was built and tested against — the manifest above installs
 the matching `2.22.5` release.
 
-### kgateway (for `APIGateway`/`APIGatewayBackend`)
-
-kgateway implements the standard Kubernetes Gateway API, so its own CRDs
-aren't enough on their own -- the base Gateway API CRDs (`Gateway`,
-`HTTPRoute`, `GatewayClass`, ...) have to be installed first, from the
-[kubernetes-sigs/gateway-api](https://github.com/kubernetes-sigs/gateway-api)
-project, before kgateway itself:
-
-```sh
-kubectl apply -f \
-  https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
-
-helm upgrade -i --create-namespace -n kgateway-system \
-  --version v2.4.4 kgateway-crds oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds
-helm upgrade -i -n kgateway-system \
-  --version v2.4.4 kgateway oci://cr.kgateway.dev/kgateway-dev/charts/kgateway
-```
-
-Verify:
-
-```sh
-kubectl get crd | grep gateway.networking.k8s.io
-kubectl get pods -n kgateway-system
-kubectl get gatewayclass kgateway
-kubectl get crd backends.gateway.kgateway.dev
-```
-
-Manifest fallback (no Helm): kgateway itself doesn't publish a bundled
-`install.yaml`; the OCI Helm charts above are the project's own recommended
-install path. The base Gateway API CRDs above are already a plain manifest.
-`crd-gateway-api-v1.6.1.yaml` and `crd-kgateway-v2.4.4.yaml` at the repo root
-are the CRDs this operator was built and tested against — the commands
-above install the matching `1.6.1`/`2.4.4` releases.
-
 ### Once the dependency operators are up
 
 Install paas-operator's own CRDs and controller (see below), then the
 samples in `config/samples/` — `paas_v1alpha1_postgrescluster.yaml`,
 `paas_v1alpha1_valkeycluster.yaml`, `paas_v1alpha1_grafanainstance.yaml`,
-`paas_v1alpha1_mariadbcluster.yaml`, `paas_v1alpha1_rabbitmqcluster.yaml`,
-`paas_v1alpha1_apigateway.yaml`, `paas_v1alpha1_apigatewaybackend.yaml` —
+`paas_v1alpha1_mariadbcluster.yaml`, `paas_v1alpha1_rabbitmqcluster.yaml` —
 double as a smoke test that each dependency operator is reachable and
 correctly versioned.
 
@@ -461,8 +365,8 @@ correctly versioned.
 - Access to a Kubernetes v1.11.3+ cluster.
 - The dependency operators installed — see "Installing the Dependency
   Operators" above — for whichever CRs (`PostgresCluster`, `ValkeyCluster`,
-  `GrafanaInstance`, `MariaDBCluster`, `RabbitMQCluster`, `APIGateway`,
-  `APIGatewayBackend`) you plan to create.
+  `GrafanaInstance`, `MariaDBCluster`, `RabbitMQCluster`) you plan to
+  create.
 
 ### To Deploy on the cluster
 **Build and push your image to the location specified by `IMG`:**
