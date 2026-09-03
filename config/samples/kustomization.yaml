@@ -3,4 +3,6 @@ resources:
 - paas_v1alpha1_postgrescluster.yaml
 - paas_v1alpha1_valkeycluster.yaml
 - paas_v1alpha1_grafanainstance.yaml
+- paas_v1alpha1_mariadbcluster.yaml
+- paas_v1alpha1_rabbitmqcluster.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

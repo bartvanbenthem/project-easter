@@ -61,11 +61,11 @@ var _ = Describe("PostgresCluster Controller", func() {
 					Spec: paasv1alpha1.PostgresClusterSpec{
 						Instances: 3,
 						Storage: paasv1alpha1.StorageSpec{
-							Size: "1Gi",
+							Size: testStorageSize,
 						},
 						Database: paasv1alpha1.DatabaseSpec{
-							Name:  "app",
-							Owner: "app",
+							Name:  testDBName,
+							Owner: testDBName,
 						},
 					},
 				}
@@ -129,10 +129,10 @@ var _ = Describe("PostgresCluster Controller", func() {
 			Expect(instances).To(Equal(int64(3)))
 
 			size, _, _ := unstructured.NestedString(got.Object, "spec", "storage", "size")
-			Expect(size).To(Equal("1Gi"))
+			Expect(size).To(Equal(testStorageSize))
 
 			dbName, _, _ := unstructured.NestedString(got.Object, "spec", "bootstrap", "initdb", "database")
-			Expect(dbName).To(Equal("app"))
+			Expect(dbName).To(Equal(testDBName))
 
 			By("verifying the PostgresCluster status was patched")
 			var withStatus paasv1alpha1.PostgresCluster

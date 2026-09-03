@@ -5,6 +5,8 @@ resources:
 - bases/paas.example.com_postgresclusters.yaml
 - bases/paas.example.com_valkeyclusters.yaml
 - bases/paas.example.com_grafanainstances.yaml
+- bases/paas.example.com_mariadbclusters.yaml
+- bases/paas.example.com_rabbitmqclusters.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

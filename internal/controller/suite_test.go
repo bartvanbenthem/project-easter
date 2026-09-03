@@ -40,6 +40,14 @@ import (
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
+// Shared test fixture values, reused across the per-vendor controller
+// tests below so golangci-lint's goconst check doesn't flag them once a
+// literal recurs across enough files.
+const (
+	testStorageSize = "1Gi"
+	testDBName      = "app"
+)
+
 var (
 	ctx       context.Context
 	cancel    context.CancelFunc

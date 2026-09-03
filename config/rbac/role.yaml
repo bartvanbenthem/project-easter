@@ -24,10 +24,24 @@ rules:
   - update
   - watch
 - apiGroups:
+  - k8s.mariadb.com
+  resources:
+  - mariadbs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - paas.example.com
   resources:
   - grafanainstances
+  - mariadbclusters
   - postgresclusters
+  - rabbitmqclusters
   - valkeyclusters
   verbs:
   - create
@@ -41,7 +55,9 @@ rules:
   - paas.example.com
   resources:
   - grafanainstances/finalizers
+  - mariadbclusters/finalizers
   - postgresclusters/finalizers
+  - rabbitmqclusters/finalizers
   - valkeyclusters/finalizers
   verbs:
   - update
@@ -49,7 +65,9 @@ rules:
   - paas.example.com
   resources:
   - grafanainstances/status
+  - mariadbclusters/status
   - postgresclusters/status
+  - rabbitmqclusters/status
   - valkeyclusters/status
   verbs:
   - get
@@ -59,6 +77,18 @@ rules:
   - postgresql.cnpg.io
   resources:
   - clusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rabbitmq.com
+  resources:
+  - rabbitmqclusters
   verbs:
   - create
   - delete

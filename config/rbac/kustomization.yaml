@@ -22,6 +22,12 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the paas-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- rabbitmqcluster_admin_role.yaml
+- rabbitmqcluster_editor_role.yaml
+- rabbitmqcluster_viewer_role.yaml
+- mariadbcluster_admin_role.yaml
+- mariadbcluster_editor_role.yaml
+- mariadbcluster_viewer_role.yaml
 - grafanainstance_admin_role.yaml
 - grafanainstance_editor_role.yaml
 - grafanainstance_viewer_role.yaml

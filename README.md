@@ -6,11 +6,15 @@ opinionated ones of our own. Each vendor gets its own thin CRD under
 `paas.example.com/v1alpha1` — currently `PostgresCluster` (for
 [CloudNativePG](https://cloudnative-pg.io)), `ValkeyCluster` (for
 [valkey-io/valkey-operator](https://github.com/valkey-io/valkey-operator)),
-and `GrafanaInstance` (for
-[grafana/grafana-operator](https://github.com/grafana/grafana-operator)) —
-reconciled into a full vendor object, so consumers get a working
-Postgres/Valkey/Grafana instance from ~10 lines of YAML instead of having to
-understand the vendor's much larger spec.
+`GrafanaInstance` (for
+[grafana/grafana-operator](https://github.com/grafana/grafana-operator)),
+`MariaDBCluster` (for
+[mariadb-operator](https://github.com/mariadb-operator/mariadb-operator)),
+and `RabbitMQCluster` (for the [RabbitMQ Cluster
+Operator](https://github.com/rabbitmq/cluster-operator)) — reconciled into a
+full vendor object, so consumers get a working
+Postgres/Valkey/Grafana/MariaDB/RabbitMQ instance from ~10 lines of YAML
+instead of having to understand the vendor's much larger spec.
 
 ```yaml
 apiVersion: paas.example.com/v1alpha1
@@ -43,6 +47,27 @@ spec:
   replicas: 1
   persistence:
     size: 1Gi
+---
+apiVersion: paas.example.com/v1alpha1
+kind: MariaDBCluster
+metadata:
+  name: example-mariadb
+spec:
+  replicas: 3
+  storage:
+    size: 10Gi
+  database:
+    name: app
+    owner: app
+---
+apiVersion: paas.example.com/v1alpha1
+kind: RabbitMQCluster
+metadata:
+  name: example-rabbitmq
+spec:
+  replicas: 3
+  storage:
+    size: 10Gi
 ```
 
 ## How it works
@@ -59,29 +84,33 @@ type means writing the adapter, not another copy of the reconcile loop.
   It's generic over the paas CR type and driven by a small `Adapter`
   interface — this is the one place the actual CRUD/reconciliation logic
   lives.
-- `internal/cnpg/cnpg.go`, `internal/valkey/valkey.go`, and
-  `internal/grafana/grafana.go` — one `Adapter` implementation per vendor:
+- `internal/cnpg/cnpg.go`, `internal/valkey/valkey.go`,
+  `internal/grafana/grafana.go`, `internal/mariadb/mariadb.go`, and
+  `internal/rabbitmq/rabbitmq.go` — one `Adapter` implementation per vendor:
   the target `GroupVersionKind`, how to build the desired vendor object from
   our CR's spec, and how to read phase/readiness back out of its status.
   None of the vendors' Go API types or CRD schemas are vendored — we don't
   own those CRDs, and their schemas are large and version-specific (see
-  `crd-cnpg-v1.30.0.yaml`, `crd-valkey-v0.6.0.yaml`, and
-  `crd-grafana-v5.25.0.yaml` at the repo root). Instead the target is
-  addressed purely through controller-runtime's dynamic client
+  `crd-cnpg-v1.30.0.yaml`, `crd-valkey-v0.6.0.yaml`,
+  `crd-grafana-v5.25.0.yaml`, `crd-mariadb-operator-v26.6.0.yaml`, and
+  `crd-rabbitmq-cluster-operator-v2.22.5.yaml` at the repo root). Instead the
+  target is addressed purely through controller-runtime's dynamic client
   (`unstructured.Unstructured` + a `schema.GroupVersionKind`), and the
   desired object is built as a plain `map[string]any` applied via
   Server-Side Apply (`client.Patch(ctx, obj, client.Apply, ...)`). This keeps
   the operator decoupled from any one vendor version.
 - `api/v1alpha1/postgrescluster_types.go` / `valkeycluster_types.go` /
-  `grafanainstance_types.go` — our own CRDs, scaffolded and generated the
+  `grafanainstance_types.go` / `mariadbcluster_types.go` /
+  `rabbitmqcluster_types.go` — our own CRDs, scaffolded and generated the
   normal kubebuilder way (`+kubebuilder:validation`/`+kubebuilder:printcolumn`
   markers, `controller-gen` for the CRD YAML and deepcopy code).
 - `internal/controller/postgrescluster_controller.go` /
-  `valkeycluster_controller.go` / `grafanainstance_controller.go` — a few
+  `valkeycluster_controller.go` / `grafanainstance_controller.go` /
+  `mariadbcluster_controller.go` / `rabbitmqcluster_controller.go` — a few
   lines each: they just instantiate `GenericReconciler` with the matching
-  adapter (`cnpg.Adapter{}` / `valkey.Adapter{}` / `grafana.Adapter{}`) and
-  register it with the manager. RBAC markers for both our own CRD and the
-  vendor's live here.
+  adapter (`cnpg.Adapter{}` / `valkey.Adapter{}` / `grafana.Adapter{}` /
+  `mariadb.Adapter{}` / `rabbitmq.Adapter{}`) and register it with the
+  manager. RBAC markers for both our own CRD and the vendor's live here.
 - One paas CR maps to exactly one same-named vendor object. On delete, the
   operator removes the vendor object before releasing its own finalizer, so
   e.g. `kubectl delete postgrescluster` also tears down the database.
@@ -91,7 +120,8 @@ type means writing the adapter, not another copy of the reconcile loop.
   for typed children. Wiring a raw `source.Kind` watch on the dynamic GVK
   would remove the poll delay, if it's ever worth the complexity.
 - `internal/controller/testdata/crd/postgresql.cnpg.io_clusters.yaml`,
-  `valkey.io_valkeyclusters.yaml`, and `grafana.integreatly.org_grafanas.yaml`
+  `valkey.io_valkeyclusters.yaml`, `grafana.integreatly.org_grafanas.yaml`,
+  `k8s.mariadb.com_mariadbs.yaml`, and `rabbitmq.com_rabbitmqclusters.yaml`
   are the real vendor CRDs, loaded into `envtest` so the controller tests
   validate the generated objects against each vendor's actual OpenAPI schema
   — not just against our own assumptions about its shape.
@@ -126,19 +156,29 @@ Deliberately minimal, per type. `PostgresCluster` exposes `instances`,
 `replicas`, `image`, `persistence.size`, `persistence.storageClass`, and
 optional `resources`; `GrafanaInstance` exposes `version`, `replicas`, and
 optional `persistence.size`/`persistence.storageClass` (no PVC is requested
-when `persistence` is unset — Grafana runs with ephemeral storage). All
-`resources` fields reuse `corev1.ResourceRequirements` directly, except
-`GrafanaInstance`, which doesn't expose one: the real field lives deep inside
+when `persistence` is unset — Grafana runs with ephemeral storage);
+`MariaDBCluster` exposes `replicas`, `image`, `storage.size`,
+`storage.storageClass`, `database.name`, `database.owner`, and optional
+`resources` (`replicas` > 1 also turns on Galera Cluster, mariadb-operator's
+synchronous multi-primary replication); `RabbitMQCluster` exposes `replicas`,
+`image`, `storage.size`, `storage.storageClass`, and optional `resources`
+(no bootstrap-database equivalent — the RabbitMQ Cluster Operator always
+creates a default vhost and user itself, writing credentials to a
+`<name>-default-user` Secret it manages). All `resources` fields reuse
+`corev1.ResourceRequirements` directly, except `GrafanaInstance`, which
+doesn't expose one: the real field lives deep inside
 `spec.deployment.spec.template.spec.containers[].resources` (keyed by
 container name) rather than as a simple top-level object, so it was left out
 of this first pass rather than guessing at the container name grafana-operator
 expects. Everything else in the generated vendor object (CNPG's backups,
 monitoring, affinity, pooling, superuser secret, etc.; Valkey's TLS, ACLs,
 exporter, pod disruption budget, etc.; Grafana's ingress/route, SMTP,
-plugins, jsonnet, service accounts, etc.) is left at that vendor's own
-defaults. Extending a mapping means adding a field to the CR's `*Spec` type
-in `api/v1alpha1/`, running `make manifests generate`, and threading it
-through that vendor's `BuildManifest` in `internal/<vendor>/`.
+plugins, jsonnet, service accounts, etc.; mariadb-operator's TLS,
+replication (non-Galera), MaxScale, backups, etc.; the RabbitMQ Cluster
+Operator's TLS, plugins, definitions import, affinity, etc.) is left at that
+vendor's own defaults. Extending a mapping means adding a field to the CR's
+`*Spec` type in `api/v1alpha1/`, running `make manifests generate`, and
+threading it through that vendor's `BuildManifest` in `internal/<vendor>/`.
 
 Notes on what's deliberately out of scope:
 - valkey-operator also defines a `ValkeyNode` CRD, but it's explicitly
@@ -149,33 +189,42 @@ Notes on what's deliberately out of scope:
   configure a running Grafana — this operator only targets `Grafana` itself
   (the actual instance), the same way it only targets CNPG's `Cluster` and
   not CNPG's `Pooler`/`Backup`.
+- mariadb-operator also defines `Backup`/`Restore`/`Connection`/`Database`/
+  `User`/`Grant`/`MaxScale` CRDs; this operator only targets `MariaDB`
+  itself, the actual cluster.
 
 ## Verified while building this
 
 `go build`, `go vet`, `make manifests`/`generate` (regenerates CRD YAML +
 deepcopy code via `controller-gen`), `make lint` (golangci-lint, 0 issues),
 and `make test` (a real `envtest` API server, with our CRDs and CNPG's,
-valkey-operator's, and grafana-operator's actual CRDs all loaded — see above)
-all pass; all three controller tests exercise finalizer-add, Server-Side
-Apply of the generated vendor object, and the status-mirroring logic end to
-end. Not run: anything against a live cluster with CNPG, valkey-operator, or
-grafana-operator actually installed and reconciling — do that before
-trusting this in anything real (the Grafana mapping in particular is
-untested against a live grafana-operator: the `deployment.spec.replicas` and
-`persistentVolumeClaim` paths are correct per its CRD schema, but its actual
-reconciliation behavior hasn't been exercised end to end).
+valkey-operator's, grafana-operator's, mariadb-operator's, and the RabbitMQ
+Cluster Operator's actual CRDs all loaded — see above) all pass; all five
+controller tests exercise finalizer-add, Server-Side Apply of the generated
+vendor object, and the status-mirroring logic end to end. Not run: anything
+against a live cluster with CNPG, valkey-operator, grafana-operator,
+mariadb-operator, or the RabbitMQ Cluster Operator actually installed and
+reconciling — do that before trusting this in anything real (the Grafana
+mapping in particular is untested against a live grafana-operator: the
+`deployment.spec.replicas` and `persistentVolumeClaim` paths are correct per
+its CRD schema, but its actual reconciliation behavior hasn't been exercised
+end to end; same caveat for `MariaDBCluster`/`RabbitMQCluster` against a live
+mariadb-operator/RabbitMQ Cluster Operator).
 
 ## Installing the Dependency Operators
 
 paas-operator only ever talks to the vendor CRDs (CNPG's `Cluster`,
-valkey-operator's `ValkeyCluster`, grafana-operator's `Grafana`) via
-Server-Side Apply — it never installs the vendor operators themselves. Each
-one has to be running in the cluster *before* paas-operator can reconcile
-anything, otherwise `BuildManifest`'s Server-Side Apply calls fail because
-the target CRD doesn't exist yet. All three ship a Helm chart; that's the
-preferred route below, with the plain-manifest fallback noted for each.
+valkey-operator's `ValkeyCluster`, grafana-operator's `Grafana`,
+mariadb-operator's `MariaDB`, the RabbitMQ Cluster Operator's
+`RabbitmqCluster`) via Server-Side Apply — it never installs the vendor
+operators themselves. Each one has to be running in the cluster *before*
+paas-operator can reconcile anything, otherwise `BuildManifest`'s
+Server-Side Apply calls fail because the target CRD doesn't exist yet. Four
+of the five ship a Helm chart; the RabbitMQ Cluster Operator ships a plain
+manifest instead (its own recommended install path). That's the preferred
+route for each below.
 
-Install order doesn't matter between the three (they don't depend on each
+Install order doesn't matter between the five (they don't depend on each
 other) — just make sure whichever ones you actually plan to create CRs for
 are up before applying `config/samples/` or your own CRs.
 
@@ -251,11 +300,58 @@ or `kubectl apply -k github.com/grafana/grafana-operator/config/default?ref=v5.2
 built and tested against — the Helm chart above installs the matching
 `5.25.0` version.
 
+### mariadb-operator (for `MariaDBCluster`)
+
+```sh
+helm repo add mariadb-operator https://mariadb-operator.github.io/mariadb-operator
+helm repo update
+helm install mariadb-operator-crds mariadb-operator/mariadb-operator-crds \
+  --version 26.6.0
+helm install mariadb-operator mariadb-operator/mariadb-operator \
+  --version 26.6.0 -n mariadb-operator-system --create-namespace
+```
+
+Verify:
+
+```sh
+kubectl get pods -n mariadb-operator-system
+kubectl get crd mariadbs.k8s.mariadb.com
+```
+
+Manifest fallback (no Helm): mariadb-operator doesn't publish a bundled
+`install.yaml`; the Helm charts (also available as OCI images, see the
+[Helm doc](https://github.com/mariadb-operator/mariadb-operator/blob/main/docs/helm.md))
+are the supported install path. `crd-mariadb-operator-v26.6.0.yaml` at the
+repo root is the CRD this operator was built and tested against — the Helm
+charts above install the matching `26.6.0` release.
+
+### RabbitMQ Cluster Operator (for `RabbitMQCluster`)
+
+```sh
+kubectl apply -f \
+  https://github.com/rabbitmq/cluster-operator/releases/download/v2.22.5/cluster-operator.yml
+```
+
+Verify:
+
+```sh
+kubectl get pods -n rabbitmq-system
+kubectl get crd rabbitmqclusters.rabbitmq.com
+```
+
+The RabbitMQ Cluster Operator doesn't publish an official Helm chart — the
+manifest above (installing into its own `rabbitmq-system` namespace) is the
+project's own recommended install path.
+`crd-rabbitmq-cluster-operator-v2.22.5.yaml` at the repo root is the CRD
+this operator was built and tested against — the manifest above installs
+the matching `2.22.5` release.
+
 ### Once the dependency operators are up
 
 Install paas-operator's own CRDs and controller (see below), then the
 samples in `config/samples/` — `paas_v1alpha1_postgrescluster.yaml`,
-`paas_v1alpha1_valkeycluster.yaml`, `paas_v1alpha1_grafanainstance.yaml` —
+`paas_v1alpha1_valkeycluster.yaml`, `paas_v1alpha1_grafanainstance.yaml`,
+`paas_v1alpha1_mariadbcluster.yaml`, `paas_v1alpha1_rabbitmqcluster.yaml` —
 double as a smoke test that each dependency operator is reachable and
 correctly versioned.
 
@@ -268,7 +364,7 @@ correctly versioned.
 - Access to a Kubernetes v1.11.3+ cluster.
 - The dependency operators installed — see "Installing the Dependency
   Operators" above — for whichever CRs (`PostgresCluster`, `ValkeyCluster`,
-  `GrafanaInstance`) you plan to create.
+  `GrafanaInstance`, `MariaDBCluster`, `RabbitMQCluster`) you plan to create.
 
 ### To Deploy on the cluster
 **Build and push your image to the location specified by `IMG`:**

@@ -36,4 +36,22 @@ resources:
   kind: GrafanaInstance
   path: github.com/bartvanbenthem/paas-operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: example.com
+  group: paas
+  kind: MariaDBCluster
+  path: github.com/bartvanbenthem/paas-operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: example.com
+  group: paas
+  kind: RabbitMQCluster
+  path: github.com/bartvanbenthem/paas-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"
