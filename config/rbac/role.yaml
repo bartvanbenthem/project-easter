@@ -1,0 +1,81 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - grafana.integreatly.org
+  resources:
+  - grafanas
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - paas.example.com
+  resources:
+  - grafanainstances
+  - postgresclusters
+  - valkeyclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - paas.example.com
+  resources:
+  - grafanainstances/finalizers
+  - postgresclusters/finalizers
+  - valkeyclusters/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - paas.example.com
+  resources:
+  - grafanainstances/status
+  - postgresclusters/status
+  - valkeyclusters/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - valkey.io
+  resources:
+  - valkeyclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

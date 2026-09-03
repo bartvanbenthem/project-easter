@@ -1,2 +1,393 @@
-# project-easter
-PaaS project
+# paas-operator
+
+A meta operator, built with [kubebuilder](https://book.kubebuilder.io)/
+`controller-runtime`, that fronts other operators' large CRDs with small,
+opinionated ones of our own. Each vendor gets its own thin CRD under
+`paas.example.com/v1alpha1` — currently `PostgresCluster` (for
+[CloudNativePG](https://cloudnative-pg.io)), `ValkeyCluster` (for
+[valkey-io/valkey-operator](https://github.com/valkey-io/valkey-operator)),
+and `GrafanaInstance` (for
+[grafana/grafana-operator](https://github.com/grafana/grafana-operator)) —
+reconciled into a full vendor object, so consumers get a working
+Postgres/Valkey/Grafana instance from ~10 lines of YAML instead of having to
+understand the vendor's much larger spec.
+
+```yaml
+apiVersion: paas.example.com/v1alpha1
+kind: PostgresCluster
+metadata:
+  name: example-db
+spec:
+  instances: 3
+  storage:
+    size: 10Gi
+  database:
+    name: app
+    owner: app
+---
+apiVersion: paas.example.com/v1alpha1
+kind: ValkeyCluster
+metadata:
+  name: example-cache
+spec:
+  shards: 3
+  replicas: 1
+  persistence:
+    size: 5Gi
+---
+apiVersion: paas.example.com/v1alpha1
+kind: GrafanaInstance
+metadata:
+  name: example-grafana
+spec:
+  replicas: 1
+  persistence:
+    size: 1Gi
+```
+
+## How it works
+
+Every vendor integration follows the same shape: our own thin CRD, a mapping
+onto the vendor's real object, and a controller. The mapping and controller
+are split into a reusable engine plus a small per-vendor adapter, so adding a
+type means writing the adapter, not another copy of the reconcile loop.
+
+- `internal/reconciler/reconciler.go` — the shared engine
+  (`GenericReconciler[T, PT]`) used by every vendor integration:
+  finalizer-gated cleanup, idempotent Server-Side Apply of the vendor object,
+  status-mirroring with a standard `Ready` condition, and event recording.
+  It's generic over the paas CR type and driven by a small `Adapter`
+  interface — this is the one place the actual CRUD/reconciliation logic
+  lives.
+- `internal/cnpg/cnpg.go`, `internal/valkey/valkey.go`, and
+  `internal/grafana/grafana.go` — one `Adapter` implementation per vendor:
+  the target `GroupVersionKind`, how to build the desired vendor object from
+  our CR's spec, and how to read phase/readiness back out of its status.
+  None of the vendors' Go API types or CRD schemas are vendored — we don't
+  own those CRDs, and their schemas are large and version-specific (see
+  `crd-cnpg-v1.30.0.yaml`, `crd-valkey-v0.6.0.yaml`, and
+  `crd-grafana-v5.25.0.yaml` at the repo root). Instead the target is
+  addressed purely through controller-runtime's dynamic client
+  (`unstructured.Unstructured` + a `schema.GroupVersionKind`), and the
+  desired object is built as a plain `map[string]any` applied via
+  Server-Side Apply (`client.Patch(ctx, obj, client.Apply, ...)`). This keeps
+  the operator decoupled from any one vendor version.
+- `api/v1alpha1/postgrescluster_types.go` / `valkeycluster_types.go` /
+  `grafanainstance_types.go` — our own CRDs, scaffolded and generated the
+  normal kubebuilder way (`+kubebuilder:validation`/`+kubebuilder:printcolumn`
+  markers, `controller-gen` for the CRD YAML and deepcopy code).
+- `internal/controller/postgrescluster_controller.go` /
+  `valkeycluster_controller.go` / `grafanainstance_controller.go` — a few
+  lines each: they just instantiate `GenericReconciler` with the matching
+  adapter (`cnpg.Adapter{}` / `valkey.Adapter{}` / `grafana.Adapter{}`) and
+  register it with the manager. RBAC markers for both our own CRD and the
+  vendor's live here.
+- One paas CR maps to exactly one same-named vendor object. On delete, the
+  operator removes the vendor object before releasing its own finalizer, so
+  e.g. `kubectl delete postgrescluster` also tears down the database.
+- Status is refreshed by polling (15s while not ready, 5m once ready) rather
+  than a push watch: `unstructured.Unstructured` isn't registered with the
+  manager's scheme, so an `Owns()`-style watch isn't available the way it is
+  for typed children. Wiring a raw `source.Kind` watch on the dynamic GVK
+  would remove the poll delay, if it's ever worth the complexity.
+- `internal/controller/testdata/crd/postgresql.cnpg.io_clusters.yaml`,
+  `valkey.io_valkeyclusters.yaml`, and `grafana.integreatly.org_grafanas.yaml`
+  are the real vendor CRDs, loaded into `envtest` so the controller tests
+  validate the generated objects against each vendor's actual OpenAPI schema
+  — not just against our own assumptions about its shape.
+
+### Adding another vendor integration
+
+1. `kubebuilder create api --group paas --version v1alpha1 --kind <Kind>` for
+   the thin CRD, then trim `<Kind>Spec`/`<Kind>Status` to the handful of
+   fields worth exposing (see Scope below).
+2. Add `internal/<vendor>/<vendor>.go` implementing
+   `reconciler.Adapter[paasv1alpha1.<Kind>, *paasv1alpha1.<Kind>]` — GVK,
+   `BuildManifest`, `ExtractStatus`, `ApplyStatus` (see `internal/cnpg` or
+   `internal/valkey` as a template).
+3. Replace the scaffolded controller body with a thin wrapper that builds
+   `reconciler.GenericReconciler[...]{Adapter: <vendor>.Adapter{}, ...}` (see
+   `internal/controller/valkeycluster_controller.go`), and wire it up in
+   `cmd/main.go`.
+4. Drop the vendor's real CRD YAML into `internal/controller/testdata/crd/`
+   for envtest, and `make manifests generate`.
+
+Rust/`kube-rs` was evaluated for this (a parallel implementation lived in
+`rust-koprs/`) and dropped: the unstructured-client + Server-Side Apply
+approach that keeps this operator decoupled from vendor CRD versions is
+available identically in kube-rs, so a second language bought nothing beyond
+a second toolchain to maintain.
+
+## Scope
+
+Deliberately minimal, per type. `PostgresCluster` exposes `instances`,
+`image`, `storage.size`, `storage.storageClass`, `database.name`,
+`database.owner`, and optional `resources`; `ValkeyCluster` exposes `shards`,
+`replicas`, `image`, `persistence.size`, `persistence.storageClass`, and
+optional `resources`; `GrafanaInstance` exposes `version`, `replicas`, and
+optional `persistence.size`/`persistence.storageClass` (no PVC is requested
+when `persistence` is unset — Grafana runs with ephemeral storage). All
+`resources` fields reuse `corev1.ResourceRequirements` directly, except
+`GrafanaInstance`, which doesn't expose one: the real field lives deep inside
+`spec.deployment.spec.template.spec.containers[].resources` (keyed by
+container name) rather than as a simple top-level object, so it was left out
+of this first pass rather than guessing at the container name grafana-operator
+expects. Everything else in the generated vendor object (CNPG's backups,
+monitoring, affinity, pooling, superuser secret, etc.; Valkey's TLS, ACLs,
+exporter, pod disruption budget, etc.; Grafana's ingress/route, SMTP,
+plugins, jsonnet, service accounts, etc.) is left at that vendor's own
+defaults. Extending a mapping means adding a field to the CR's `*Spec` type
+in `api/v1alpha1/`, running `make manifests generate`, and threading it
+through that vendor's `BuildManifest` in `internal/<vendor>/`.
+
+Notes on what's deliberately out of scope:
+- valkey-operator also defines a `ValkeyNode` CRD, but it's explicitly
+  internal to that operator ("users should not create ValkeyNodes directly"
+  per its own CRD description) — this operator only targets `ValkeyCluster`.
+- grafana-operator ships a large family of child CRDs (`GrafanaDashboard`,
+  `GrafanaDataSource`, `GrafanaFolder`, `GrafanaAlertRuleGroup`, ...) that
+  configure a running Grafana — this operator only targets `Grafana` itself
+  (the actual instance), the same way it only targets CNPG's `Cluster` and
+  not CNPG's `Pooler`/`Backup`.
+
+## Verified while building this
+
+`go build`, `go vet`, `make manifests`/`generate` (regenerates CRD YAML +
+deepcopy code via `controller-gen`), `make lint` (golangci-lint, 0 issues),
+and `make test` (a real `envtest` API server, with our CRDs and CNPG's,
+valkey-operator's, and grafana-operator's actual CRDs all loaded — see above)
+all pass; all three controller tests exercise finalizer-add, Server-Side
+Apply of the generated vendor object, and the status-mirroring logic end to
+end. Not run: anything against a live cluster with CNPG, valkey-operator, or
+grafana-operator actually installed and reconciling — do that before
+trusting this in anything real (the Grafana mapping in particular is
+untested against a live grafana-operator: the `deployment.spec.replicas` and
+`persistentVolumeClaim` paths are correct per its CRD schema, but its actual
+reconciliation behavior hasn't been exercised end to end).
+
+## Installing the Dependency Operators
+
+paas-operator only ever talks to the vendor CRDs (CNPG's `Cluster`,
+valkey-operator's `ValkeyCluster`, grafana-operator's `Grafana`) via
+Server-Side Apply — it never installs the vendor operators themselves. Each
+one has to be running in the cluster *before* paas-operator can reconcile
+anything, otherwise `BuildManifest`'s Server-Side Apply calls fail because
+the target CRD doesn't exist yet. All three ship a Helm chart; that's the
+preferred route below, with the plain-manifest fallback noted for each.
+
+Install order doesn't matter between the three (they don't depend on each
+other) — just make sure whichever ones you actually plan to create CRs for
+are up before applying `config/samples/` or your own CRs.
+
+### CloudNativePG (for `PostgresCluster`)
+
+```sh
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm repo update
+helm upgrade --install cnpg cnpg/cloudnative-pg \
+  -n cnpg-system --create-namespace
+```
+
+Verify:
+
+```sh
+kubectl get pods -n cnpg-system
+kubectl get crd clusters.postgresql.cnpg.io
+```
+
+Manifest fallback (no Helm):
+
+```sh
+kubectl apply --server-side -f \
+  https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.30/releases/cnpg-1.30.0.yaml
+```
+
+`crd-cnpg-v1.30.0.yaml` at the repo root is the CRD bundle this operator was
+built and tested against — both routes above install the matching 1.30.0
+release.
+
+### valkey-operator (for `ValkeyCluster`)
+
+```sh
+helm repo add valkey https://valkey.io/valkey-helm
+helm repo update
+helm install valkey-operator valkey/valkey-operator \
+  -n valkey-operator-system --create-namespace
+```
+
+Verify:
+
+```sh
+kubectl get pods -n valkey-operator-system
+kubectl get crd valkeyclusters.valkey.io
+```
+
+Manifest fallback (no Helm): valkey-operator doesn't publish a bundled
+`install.yaml`; deploy from source instead —
+`kubectl apply -k github.com/valkey-io/valkey-operator/config/default?ref=v0.6.0`.
+`crd-valkey-v0.6.0.yaml` at the repo root is the CRD this operator was built
+and tested against — the Helm chart above installs the matching `v0.6.0`
+appVersion.
+
+### grafana-operator (for `GrafanaInstance`)
+
+```sh
+helm upgrade -i grafana-operator \
+  oci://ghcr.io/grafana/helm-charts/grafana-operator \
+  --version 5.25.0 -n grafana-operator-system --create-namespace
+```
+
+Verify:
+
+```sh
+kubectl get pods -n grafana-operator-system
+kubectl get crd grafanas.grafana.integreatly.org
+```
+
+Manifest fallback (no Helm): see the [grafana-operator Kustomize
+guide](https://grafana.github.io/grafana-operator/docs/installation/kustomize/),
+or `kubectl apply -k github.com/grafana/grafana-operator/config/default?ref=v5.25.0`.
+`crd-grafana-v5.25.0.yaml` at the repo root is the CRD this operator was
+built and tested against — the Helm chart above installs the matching
+`5.25.0` version.
+
+### Once the dependency operators are up
+
+Install paas-operator's own CRDs and controller (see below), then the
+samples in `config/samples/` — `paas_v1alpha1_postgrescluster.yaml`,
+`paas_v1alpha1_valkeycluster.yaml`, `paas_v1alpha1_grafanainstance.yaml` —
+double as a smoke test that each dependency operator is reachable and
+correctly versioned.
+
+## Getting Started
+
+### Prerequisites
+- go version v1.24.6+
+- docker version 17.03+.
+- kubectl version v1.11.3+.
+- Access to a Kubernetes v1.11.3+ cluster.
+- The dependency operators installed — see "Installing the Dependency
+  Operators" above — for whichever CRs (`PostgresCluster`, `ValkeyCluster`,
+  `GrafanaInstance`) you plan to create.
+
+### To Deploy on the cluster
+**Build and push your image to the location specified by `IMG`:**
+
+```sh
+make docker-build docker-push IMG=<some-registry>/paas-operator:tag
+```
+
+**NOTE:** This image ought to be published in the personal registry you specified.
+And it is required to have access to pull the image from the working environment.
+Make sure you have the proper permission to the registry if the above commands don’t work.
+
+**Install the CRDs into the cluster:**
+
+```sh
+make install
+```
+
+**Deploy the Manager to the cluster with the image specified by `IMG`:**
+
+```sh
+make deploy IMG=<some-registry>/paas-operator:tag
+```
+
+> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
+privileges or be logged in as admin.
+
+**Create instances of your solution**
+You can apply the samples (examples) from the config/sample:
+
+```sh
+kubectl apply -k config/samples/
+```
+
+>**NOTE**: Ensure that the samples has default values to test it out.
+
+### To Uninstall
+**Delete the instances (CRs) from the cluster:**
+
+```sh
+kubectl delete -k config/samples/
+```
+
+**Delete the APIs(CRDs) from the cluster:**
+
+```sh
+make uninstall
+```
+
+**UnDeploy the controller from the cluster:**
+
+```sh
+make undeploy
+```
+
+## Project Distribution
+
+Following the options to release and provide this solution to the users.
+
+### By providing a bundle with all YAML files
+
+1. Build the installer for the image built and published in the registry:
+
+```sh
+make build-installer IMG=<some-registry>/paas-operator:tag
+```
+
+**NOTE:** The makefile target mentioned above generates an 'install.yaml'
+file in the dist directory. This file contains all the resources built
+with Kustomize, which are necessary to install this project without its
+dependencies.
+
+2. Using the installer
+
+Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
+the project, i.e.:
+
+```sh
+kubectl apply -f https://raw.githubusercontent.com/<org>/paas-operator/<tag or branch>/dist/install.yaml
+```
+
+### By providing a Helm Chart
+
+1. Build the chart using the optional helm plugin
+
+```sh
+kubebuilder edit --plugins=helm/v2-alpha
+```
+
+2. See that a chart was generated under 'dist/chart', and users
+can obtain this solution from there.
+
+**NOTE:** If you change the project, you need to update the Helm Chart
+using the same command above to sync the latest changes. Furthermore,
+if you create webhooks, you need to use the above command with
+the '--force' flag and manually ensure that any custom configuration
+previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
+is manually re-applied afterwards.
+
+## Contributing
+// TODO(user): Add detailed information on how you would like others to contribute to this project
+
+**NOTE:** Run `make help` for more information on all potential `make` targets
+
+More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+
+## License
+
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+

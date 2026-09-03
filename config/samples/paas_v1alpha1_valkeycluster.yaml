@@ -1,0 +1,12 @@
+apiVersion: paas.example.com/v1alpha1
+kind: ValkeyCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: paas-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: valkeycluster-sample
+spec:
+  shards: 3
+  replicas: 1
+  persistence:
+    size: 5Gi
