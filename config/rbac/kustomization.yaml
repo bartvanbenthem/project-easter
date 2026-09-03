@@ -22,6 +22,12 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the paas-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- apigatewaybackend_admin_role.yaml
+- apigatewaybackend_editor_role.yaml
+- apigatewaybackend_viewer_role.yaml
+- apigateway_admin_role.yaml
+- apigateway_editor_role.yaml
+- apigateway_viewer_role.yaml
 - rabbitmqcluster_admin_role.yaml
 - rabbitmqcluster_editor_role.yaml
 - rabbitmqcluster_viewer_role.yaml

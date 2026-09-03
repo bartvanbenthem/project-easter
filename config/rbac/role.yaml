@@ -12,6 +12,30 @@ rules:
   - create
   - patch
 - apiGroups:
+  - gateway.kgateway.dev
+  resources:
+  - backends
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gateways
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - grafana.integreatly.org
   resources:
   - grafanas
@@ -38,6 +62,8 @@ rules:
 - apiGroups:
   - paas.example.com
   resources:
+  - apigatewaybackends
+  - apigateways
   - grafanainstances
   - mariadbclusters
   - postgresclusters
@@ -54,6 +80,8 @@ rules:
 - apiGroups:
   - paas.example.com
   resources:
+  - apigatewaybackends/finalizers
+  - apigateways/finalizers
   - grafanainstances/finalizers
   - mariadbclusters/finalizers
   - postgresclusters/finalizers
@@ -64,6 +92,8 @@ rules:
 - apiGroups:
   - paas.example.com
   resources:
+  - apigatewaybackends/status
+  - apigateways/status
   - grafanainstances/status
   - mariadbclusters/status
   - postgresclusters/status

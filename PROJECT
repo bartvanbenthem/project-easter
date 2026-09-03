@@ -54,4 +54,22 @@ resources:
   kind: RabbitMQCluster
   path: github.com/bartvanbenthem/paas-operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: example.com
+  group: paas
+  kind: APIGateway
+  path: github.com/bartvanbenthem/paas-operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: example.com
+  group: paas
+  kind: APIGatewayBackend
+  path: github.com/bartvanbenthem/paas-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"
