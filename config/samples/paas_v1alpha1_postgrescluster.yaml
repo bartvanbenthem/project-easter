@@ -10,7 +10,9 @@ spec:
   image: ghcr.io/cloudnative-pg/postgresql:16.4
   storage:
     size: 10Gi
-    storageClass: standard
+    # storageClass is optional; omit it to use the cluster's default
+    # StorageClass. Set it explicitly if your cluster doesn't have one
+    # (e.g. "storageClass: standard").
   database:
     name: app
     owner: app
