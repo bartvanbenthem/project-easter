@@ -94,6 +94,30 @@ type Adapter[T any, PT ObjectPtr[T]] interface {
 	ApplyStatus(cr PT, targetName string, s TargetStatus) (message string)
 }
 
+// ExtraResource is one auxiliary object (Ingress, Service, ...) an Adapter
+// wants applied alongside its primary target. GVK/Name identify it even
+// when Desired is nil, so a previously-applied extra can be deleted once the
+// CR spec stops requesting it (e.g. .spec.ingress removed).
+type ExtraResource struct {
+	GVK  schema.GroupVersionKind
+	Name string
+	// Desired is the object to Server-Side-Apply, or nil to ensure the
+	// object (still identified by GVK/Name above) is absent.
+	Desired *unstructured.Unstructured
+}
+
+// ExtraResourcesAdapter is an optional Adapter extension for vendor
+// integrations whose CR also drives objects that aren't the primary target
+// -- currently an Ingress and/or Service used to expose a resource
+// externally, for vendors with no native equivalent on the primary target's
+// own spec (see internal/rabbitmq, internal/prometheus, internal/valkey).
+// Every possible extra must be listed on every call, even ones not
+// currently desired (Desired: nil), so GenericReconciler can prune one a
+// spec change turned off.
+type ExtraResourcesAdapter[T any, PT ObjectPtr[T]] interface {
+	ExtraResources(cr PT, targetName, namespace, owner string) []ExtraResource
+}
+
 // GenericReconciler drives any paas CR type PT towards a matching,
 // same-named foreign target object (as described by Adapter) and mirrors
 // that object's status back onto the CR. This is the reconciliation logic
@@ -146,6 +170,11 @@ func (r *GenericReconciler[T, PT]) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Info(fmt.Sprintf("%s was already gone", kind))
 			}
 
+			if err := r.deleteExtraResources(ctx, cr, targetName); err != nil {
+				log.Error(err, "failed to delete extra resources")
+				return ctrl.Result{}, err
+			}
+
 			controllerutil.RemoveFinalizer(cr, FinalizerName)
 			if err := r.Update(ctx, cr); err != nil {
 				return ctrl.Result{}, err
@@ -187,6 +216,13 @@ func (r *GenericReconciler[T, PT]) Reconcile(ctx context.Context, req ctrl.Reque
 	if existing == nil {
 		r.Recorder.Eventf(cr, nil, corev1.EventTypeNormal, "TargetCreated", "Sync",
 			"%s %q created in namespace %q", kind, targetName, cr.GetNamespace())
+	}
+
+	// 3b. Apply/prune any auxiliary objects (Ingress, Service, ...) the
+	//     Adapter wants alongside the primary target.
+	if err := r.applyExtraResources(ctx, cr, targetName); err != nil {
+		log.Error(err, "failed to apply extra resources")
+		return ctrl.Result{}, err
 	}
 
 	// 4. Mirror the target's status onto our own CR.
@@ -244,6 +280,57 @@ func (r *GenericReconciler[T, PT]) deleteTarget(ctx context.Context, namespace, 
 		return false, err
 	}
 	return true, nil
+}
+
+// applyExtraResources applies/prunes the Adapter's auxiliary objects (if it
+// implements ExtraResourcesAdapter), a no-op otherwise.
+func (r *GenericReconciler[T, PT]) applyExtraResources(ctx context.Context, cr PT, targetName string) error {
+	er, ok := r.Adapter.(ExtraResourcesAdapter[T, PT])
+	if !ok {
+		return nil
+	}
+	for _, extra := range er.ExtraResources(cr, targetName, cr.GetNamespace(), cr.GetName()) {
+		if extra.Desired != nil {
+			if err := r.applyTarget(ctx, extra.Desired); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := r.deleteExtra(ctx, extra.GVK, cr.GetNamespace(), extra.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteExtraResources unconditionally deletes every auxiliary object the
+// Adapter's ExtraResources reports for cr (if it implements
+// ExtraResourcesAdapter), a no-op otherwise. Called on the CR's own deletion
+// path, mirroring deleteTarget's cleanup of the primary target.
+func (r *GenericReconciler[T, PT]) deleteExtraResources(ctx context.Context, cr PT, targetName string) error {
+	er, ok := r.Adapter.(ExtraResourcesAdapter[T, PT])
+	if !ok {
+		return nil
+	}
+	for _, extra := range er.ExtraResources(cr, targetName, cr.GetNamespace(), cr.GetName()) {
+		if err := r.deleteExtra(ctx, extra.GVK, cr.GetNamespace(), extra.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteExtra deletes one auxiliary object by GVK/name, ignoring not-found.
+func (r *GenericReconciler[T, PT]) deleteExtra(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) error {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(gvk)
+	u.SetNamespace(namespace)
+	u.SetName(name)
+	err := r.Delete(ctx, u)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 // GetTarget fetches the current foreign target object identified by gvk,

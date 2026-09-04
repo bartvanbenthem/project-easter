@@ -64,6 +64,12 @@ type MariaDBClusterSpec struct {
 	// MariaDB.
 	// +optional
 	Monitoring MonitoringSpec `json:"monitoring,omitzero"`
+
+	// expose changes the type of the underlying MariaDB's own primary
+	// Service (spec.service.type) so it is reachable outside the cluster --
+	// no separate Service object is created by this operator.
+	// +optional
+	Expose *ServiceExposeSpec `json:"expose,omitempty"`
 }
 
 // MariaDBClusterStatus defines the observed state of MariaDBCluster.

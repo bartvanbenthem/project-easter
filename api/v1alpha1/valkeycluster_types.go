@@ -58,6 +58,14 @@ type ValkeyClusterSpec struct {
 	// Valkey containers.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitzero"`
+
+	// expose creates an externally-reachable Service for the cluster's
+	// data-plane port (6379). The valkey-operator has no native
+	// externally-reachable Service of its own (its only generated Service is
+	// headless/ClusterIP), so when set this operator also creates and
+	// manages a separate LoadBalancer/NodePort Service.
+	// +optional
+	Expose *ServiceExposeSpec `json:"expose,omitempty"`
 }
 
 // PersistenceSpec describes the data volume for each Valkey node.

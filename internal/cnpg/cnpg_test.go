@@ -24,15 +24,21 @@ import (
 	paasv1alpha1 "github.com/bartvanbenthem/paas-operator/api/v1alpha1"
 )
 
-func TestBuildManifestMonitoring(t *testing.T) {
-	baseSpec := paasv1alpha1.PostgresClusterSpec{
+// baseSpec returns a minimal, valid PostgresClusterSpec shared across this
+// file's tests as a starting point.
+func baseSpec() paasv1alpha1.PostgresClusterSpec {
+	return paasv1alpha1.PostgresClusterSpec{
 		Instances: 1,
 		Storage:   paasv1alpha1.StorageSpec{Size: "1Gi"},
 		Database:  paasv1alpha1.DatabaseSpec{Name: "app", Owner: "app"},
 	}
+}
+
+func TestBuildManifestMonitoring(t *testing.T) {
+	spec := baseSpec()
 
 	t.Run("disabled by default", func(t *testing.T) {
-		cr := &paasv1alpha1.PostgresCluster{Spec: baseSpec}
+		cr := &paasv1alpha1.PostgresCluster{Spec: spec}
 		u := Adapter{}.BuildManifest(cr, "test", "default", "test")
 
 		if _, found, _ := unstructured.NestedMap(u.Object, "spec", "monitoring"); found {
@@ -41,7 +47,7 @@ func TestBuildManifestMonitoring(t *testing.T) {
 	})
 
 	t.Run("enabled sets namespace-scoped PodMonitor", func(t *testing.T) {
-		spec := baseSpec
+		spec := spec
 		spec.Monitoring = paasv1alpha1.MonitoringSpec{EnablePodMonitor: true}
 		cr := &paasv1alpha1.PostgresCluster{Spec: spec}
 
@@ -60,6 +66,46 @@ func TestBuildManifestMonitoring(t *testing.T) {
 		// makes this monitoring namespace-scoped.
 		if ns := u.GetNamespace(); ns != "default" {
 			t.Fatalf("expected Cluster namespace %q, got %q", "default", ns)
+		}
+	})
+}
+
+func TestBuildManifestExpose(t *testing.T) {
+	spec := baseSpec()
+
+	t.Run("unset leaves spec.managed unset", func(t *testing.T) {
+		cr := &paasv1alpha1.PostgresCluster{Spec: spec}
+		u := Adapter{}.BuildManifest(cr, "test", "default", "test")
+
+		if _, found, _ := unstructured.NestedMap(u.Object, "spec", "managed"); found {
+			t.Fatalf("expected no spec.managed when Expose is unset")
+		}
+	})
+
+	t.Run("set adds an rw additional service", func(t *testing.T) {
+		spec := spec
+		spec.Expose = &paasv1alpha1.ServiceExposeSpec{Type: "LoadBalancer"}
+		cr := &paasv1alpha1.PostgresCluster{Spec: spec}
+		u := Adapter{}.BuildManifest(cr, "test", "default", "test")
+
+		additional, found, err := unstructured.NestedSlice(u.Object, "spec", "managed", "services", "additional")
+		if err != nil || !found || len(additional) != 1 {
+			t.Fatalf("expected exactly one spec.managed.services.additional entry, found=%v err=%v len=%d", found, err, len(additional))
+		}
+		entry, ok := additional[0].(map[string]any)
+		if !ok {
+			t.Fatalf("expected additional[0] to be a map, got %T", additional[0])
+		}
+		if selectorType, _, _ := unstructured.NestedString(entry, "selectorType"); selectorType != "rw" {
+			t.Fatalf("expected selectorType rw, got %q", selectorType)
+		}
+		name, _, _ := unstructured.NestedString(entry, "serviceTemplate", "metadata", "name")
+		if name != "test-external" {
+			t.Fatalf("expected serviceTemplate name test-external, got %q", name)
+		}
+		svcType, _, _ := unstructured.NestedString(entry, "serviceTemplate", "spec", "type")
+		if svcType != "LoadBalancer" {
+			t.Fatalf("expected serviceTemplate.spec.type LoadBalancer, got %q", svcType)
 		}
 	})
 }

@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -142,6 +143,49 @@ var _ = Describe("ValkeyCluster Controller", func() {
 			cond := meta.FindStatusCondition(withStatus.Status.Conditions, "Ready")
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		})
+
+		It("should create and prune an external Service as .spec.expose is set and unset", func() {
+			controllerReconciler := &ValkeyClusterReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: events.NewFakeRecorder(10),
+				Adapter:  valkey.Adapter{},
+				Name:     ValkeyClusterControllerName,
+			}
+
+			By("reconciling twice with no exposure requested")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			serviceName := types.NamespacedName{Name: resourceName + "-external", Namespace: resourceNamespace}
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, serviceName, &corev1.Service{}))).To(BeTrue())
+
+			By("setting .spec.expose and reconciling")
+			var resource paasv1alpha1.ValkeyCluster
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &resource)).To(Succeed())
+			resource.Spec.Expose = &paasv1alpha1.ServiceExposeSpec{Type: corev1.ServiceTypeLoadBalancer}
+			Expect(k8sClient.Update(ctx, &resource)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			var svc corev1.Service
+			Expect(k8sClient.Get(ctx, serviceName, &svc)).To(Succeed())
+			Expect(svc.Spec.Type).To(Equal(corev1.ServiceTypeLoadBalancer))
+			Expect(svc.Spec.Selector).To(HaveKeyWithValue("valkey.io/cluster", resourceName))
+
+			By("unsetting .spec.expose and reconciling again")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &resource)).To(Succeed())
+			resource.Spec.Expose = nil
+			Expect(k8sClient.Update(ctx, &resource)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, serviceName, &corev1.Service{}))).To(BeTrue())
 		})
 	})
 })

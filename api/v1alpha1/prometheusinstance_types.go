@@ -67,6 +67,14 @@ type PrometheusInstanceSpec struct {
 	// Prometheus container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitzero"`
+
+	// ingress exposes Prometheus's web UI outside the cluster. The
+	// Prometheus Operator creates no Service of its own for Prometheus, so
+	// when set this operator also creates and manages a ClusterIP Service
+	// (selecting the Prometheus Operator's own documented
+	// "operator.prometheus.io/name" pod label) alongside the Ingress.
+	// +optional
+	Ingress *IngressSpec `json:"ingress,omitempty"`
 }
 
 // PrometheusInstanceStatus defines the observed state of PrometheusInstance.

@@ -54,6 +54,41 @@ spec:
           spec:
             description: spec defines the desired state of GrafanaInstance
             properties:
+              ingress:
+                description: |-
+                  ingress exposes Grafana's web UI outside the cluster. Applied directly
+                  as the underlying Grafana's own spec.ingress -- grafana-operator wires
+                  the backend to its own generated Service itself, so no separate
+                  Ingress object is created by this operator.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      annotations are copied verbatim onto the generated Ingress, e.g. for
+                      ingress-controller-specific tuning (cert-manager issuer, nginx rewrite
+                      rules, etc.).
+                    type: object
+                  host:
+                    description: |-
+                      host is the DNS hostname routed to this resource, e.g.
+                      "grafana.example.com".
+                    type: string
+                  ingressClassName:
+                    description: |-
+                      ingressClassName selects the IngressClass that should implement this
+                      Ingress. Defaults to the cluster's default IngressClass when unset.
+                    type: string
+                  tlsSecretName:
+                    description: |-
+                      tlsSecretName enables TLS termination at the ingress controller using
+                      this Secret (must already exist in the same namespace and contain a
+                      matching cert/key, e.g. one managed by cert-manager). When unset, the
+                      Ingress is served over plain HTTP.
+                    type: string
+                required:
+                - host
+                type: object
               persistence:
                 description: |-
                   persistence settings for Grafana's data volume. When unset, no PVC is

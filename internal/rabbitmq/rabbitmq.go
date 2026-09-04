@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	paasv1alpha1 "github.com/bartvanbenthem/paas-operator/api/v1alpha1"
+	"github.com/bartvanbenthem/paas-operator/internal/ingress"
 	"github.com/bartvanbenthem/paas-operator/internal/reconciler"
 )
 
@@ -41,6 +42,13 @@ const (
 	// ready. See internal/status/all_replicas_ready.go in
 	// github.com/rabbitmq/cluster-operator.
 	conditionTypeAllReplicasReady = "AllReplicasReady"
+
+	// managementPort is the RabbitmqCluster's management UI port. The
+	// RabbitMQ Cluster Operator always creates a Service named exactly like
+	// the RabbitmqCluster itself, exposing this port -- a documented public
+	// contract (https://www.rabbitmq.com/kubernetes/operator/using-operator),
+	// not something this operator guesses at.
+	managementPort = 15672
 )
 
 // GVK is the GroupVersionKind of the RabbitMQ Cluster Operator's
@@ -120,6 +128,22 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.RabbitMQCluster, name, namespace, 
 	u.Object["spec"] = clusterSpec
 
 	return u
+}
+
+// ExtraResources builds the Ingress fronting the RabbitmqCluster's
+// management UI, when requested. Implements
+// reconciler.ExtraResourcesAdapter[paasv1alpha1.RabbitMQCluster, *paasv1alpha1.RabbitMQCluster].
+func (Adapter) ExtraResources(cr *paasv1alpha1.RabbitMQCluster, targetName, namespace, owner string) []reconciler.ExtraResource {
+	name := targetName + "-ingress"
+
+	var desired *unstructured.Unstructured
+	if cr.Spec.Ingress != nil {
+		desired = ingress.Build(cr.Spec.Ingress, name, namespace, owner, FieldManager, targetName, managementPort)
+	}
+
+	return []reconciler.ExtraResource{
+		{GVK: ingress.GVK, Name: name, Desired: desired},
+	}
 }
 
 // ExtractStatus pulls replicas and the "AllReplicasReady" condition out of a

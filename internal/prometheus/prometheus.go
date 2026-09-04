@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	paasv1alpha1 "github.com/bartvanbenthem/paas-operator/api/v1alpha1"
+	"github.com/bartvanbenthem/paas-operator/internal/ingress"
 	"github.com/bartvanbenthem/paas-operator/internal/reconciler"
 )
 
@@ -45,7 +46,24 @@ const (
 	Version      = "v1"
 	Kind         = "Prometheus"
 	FieldManager = "prometheusinstance-operator"
+
+	// webPort is the Prometheus web UI/API port.
+	webPort = 9090
+
+	// podSelectorLabel is the Prometheus Operator's own documented label
+	// (see pkg/prometheus/server/operator.go's PrometheusNameLabelName in
+	// github.com/prometheus-operator/prometheus-operator) identifying every
+	// pod belonging to one Prometheus resource. The Prometheus Operator
+	// creates no Service of its own for Prometheus -- this label is the
+	// public contract meant for exactly this purpose, so building a Service
+	// around it (rather than guessing at other pod labels) is safe across
+	// versions.
+	podSelectorLabel = "operator.prometheus.io/name"
 )
+
+// serviceGVK is the GroupVersionKind of the Service this operator creates to
+// front a Prometheus, since the Prometheus Operator creates none itself.
+var serviceGVK = schema.GroupVersionKind{Version: "v1", Kind: "Service"}
 
 // GVK is the GroupVersionKind of the Prometheus Operator Prometheus this
 // operator manages.
@@ -146,6 +164,45 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.PrometheusInstance, name, namespac
 	u.Object["spec"] = promSpec
 
 	return u
+}
+
+// ExtraResources builds the ClusterIP Service and Ingress fronting the
+// Prometheus web UI, when requested. Both are built together since the
+// Ingress routes to the Service this operator itself creates. Implements
+// reconciler.ExtraResourcesAdapter[paasv1alpha1.PrometheusInstance, *paasv1alpha1.PrometheusInstance].
+func (Adapter) ExtraResources(cr *paasv1alpha1.PrometheusInstance, targetName, namespace, owner string) []reconciler.ExtraResource {
+	serviceName := targetName + "-web"
+	ingressName := targetName + "-ingress"
+
+	if cr.Spec.Ingress == nil {
+		return []reconciler.ExtraResource{
+			{GVK: serviceGVK, Name: serviceName, Desired: nil},
+			{GVK: ingress.GVK, Name: ingressName, Desired: nil},
+		}
+	}
+
+	service := &unstructured.Unstructured{}
+	service.SetGroupVersionKind(serviceGVK)
+	service.SetName(serviceName)
+	service.SetNamespace(namespace)
+	service.SetLabels(map[string]string{
+		"app.kubernetes.io/managed-by": FieldManager,
+		"paas.example.com/owner":       owner,
+	})
+	service.Object["spec"] = map[string]any{
+		"type":     "ClusterIP",
+		"selector": map[string]any{podSelectorLabel: targetName},
+		"ports": []any{
+			map[string]any{"name": "web", "port": int64(webPort), "targetPort": "web"},
+		},
+	}
+
+	desiredIngress := ingress.Build(cr.Spec.Ingress, ingressName, namespace, owner, FieldManager, serviceName, webPort)
+
+	return []reconciler.ExtraResource{
+		{GVK: serviceGVK, Name: serviceName, Desired: service},
+		{GVK: ingress.GVK, Name: ingressName, Desired: desiredIngress},
+	}
 }
 
 // ExtractStatus pulls replicas/availableReplicas out of a Prometheus's

@@ -74,3 +74,67 @@ func TestBuildManifestStorage(t *testing.T) {
 		t.Fatalf("expected storageClassName fast, got %q", class)
 	}
 }
+
+func TestExtraResourcesIngress(t *testing.T) {
+	t.Run("unset returns absent entries for both Service and Ingress", func(t *testing.T) {
+		cr := &paasv1alpha1.PrometheusInstance{Spec: paasv1alpha1.PrometheusInstanceSpec{Replicas: 1}}
+
+		extras := Adapter{}.ExtraResources(cr, "test", "default", "test")
+
+		if len(extras) != 2 {
+			t.Fatalf("expected 2 extras, got %d", len(extras))
+		}
+		for _, extra := range extras {
+			if extra.Desired != nil {
+				t.Fatalf("expected Desired to be nil for %q when Ingress is unset", extra.Name)
+			}
+		}
+		if extras[0].Name != "test-web" || extras[1].Name != "test-ingress" {
+			t.Fatalf("unexpected extra names: %q, %q", extras[0].Name, extras[1].Name)
+		}
+	})
+
+	t.Run("set builds a Service and an Ingress routed to it", func(t *testing.T) {
+		cr := &paasv1alpha1.PrometheusInstance{
+			Spec: paasv1alpha1.PrometheusInstanceSpec{
+				Replicas: 1,
+				Ingress:  &paasv1alpha1.IngressSpec{Host: "prometheus.example.com"},
+			},
+		}
+
+		extras := Adapter{}.ExtraResources(cr, "test", "default", "test")
+		if len(extras) != 2 {
+			t.Fatalf("expected 2 extras, got %d", len(extras))
+		}
+
+		svc := extras[0]
+		if svc.Desired == nil {
+			t.Fatalf("expected the Service to be desired")
+		}
+		selector, _, _ := unstructured.NestedString(svc.Desired.Object, "spec", "selector", "operator.prometheus.io/name")
+		if selector != "test" {
+			t.Fatalf("expected selector operator.prometheus.io/name=test, got %q", selector)
+		}
+
+		ing := extras[1]
+		if ing.Desired == nil {
+			t.Fatalf("expected the Ingress to be desired")
+		}
+		rules, _, _ := unstructured.NestedSlice(ing.Desired.Object, "spec", "rules")
+		if len(rules) != 1 {
+			t.Fatalf("expected exactly one Ingress rule, got %d", len(rules))
+		}
+		rule, _ := rules[0].(map[string]any)
+		host, _, _ := unstructured.NestedString(rule, "host")
+		if host != "prometheus.example.com" {
+			t.Fatalf("expected host prometheus.example.com, got %q", host)
+		}
+
+		paths, _, _ := unstructured.NestedSlice(rule, "http", "paths")
+		path, _ := paths[0].(map[string]any)
+		backendName, _, _ := unstructured.NestedString(path, "backend", "service", "name")
+		if backendName != "test-web" {
+			t.Fatalf("expected Ingress backend service name test-web, got %q", backendName)
+		}
+	})
+}

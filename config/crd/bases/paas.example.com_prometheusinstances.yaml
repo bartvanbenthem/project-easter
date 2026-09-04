@@ -55,6 +55,42 @@ spec:
           spec:
             description: spec defines the desired state of PrometheusInstance
             properties:
+              ingress:
+                description: |-
+                  ingress exposes Prometheus's web UI outside the cluster. The
+                  Prometheus Operator creates no Service of its own for Prometheus, so
+                  when set this operator also creates and manages a ClusterIP Service
+                  (selecting the Prometheus Operator's own documented
+                  "operator.prometheus.io/name" pod label) alongside the Ingress.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      annotations are copied verbatim onto the generated Ingress, e.g. for
+                      ingress-controller-specific tuning (cert-manager issuer, nginx rewrite
+                      rules, etc.).
+                    type: object
+                  host:
+                    description: |-
+                      host is the DNS hostname routed to this resource, e.g.
+                      "grafana.example.com".
+                    type: string
+                  ingressClassName:
+                    description: |-
+                      ingressClassName selects the IngressClass that should implement this
+                      Ingress. Defaults to the cluster's default IngressClass when unset.
+                    type: string
+                  tlsSecretName:
+                    description: |-
+                      tlsSecretName enables TLS termination at the ingress controller using
+                      this Secret (must already exist in the same namespace and contain a
+                      matching cert/key, e.g. one managed by cert-manager). When unset, the
+                      Ingress is served over plain HTTP.
+                    type: string
+                required:
+                - host
+                type: object
               replicas:
                 default: 1
                 description: replicas is the number of Prometheus pods to run.

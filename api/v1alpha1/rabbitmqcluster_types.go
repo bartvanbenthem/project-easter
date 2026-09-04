@@ -59,6 +59,13 @@ type RabbitMQClusterSpec struct {
 	// RabbitMQ containers.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitzero"`
+
+	// ingress exposes RabbitMQ's management UI (port 15672) outside the
+	// cluster. The RabbitMQ Cluster Operator has no native ingress field, so
+	// when set this operator also creates and manages a separate Ingress
+	// object pointing at the RabbitmqCluster's own generated Service.
+	// +optional
+	Ingress *IngressSpec `json:"ingress,omitempty"`
 }
 
 // RabbitMQClusterStatus defines the observed state of RabbitMQCluster.

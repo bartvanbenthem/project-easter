@@ -107,6 +107,32 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.PostgresCluster, name, namespace, 
 		clusterSpec["resources"] = resources
 	}
 
+	if spec.Expose != nil {
+		serviceMetadata := map[string]any{"name": name + "-external"}
+		if len(spec.Expose.Annotations) > 0 {
+			annotations := make(map[string]any, len(spec.Expose.Annotations))
+			for k, v := range spec.Expose.Annotations {
+				annotations[k] = v
+			}
+			serviceMetadata["annotations"] = annotations
+		}
+		clusterSpec["managed"] = map[string]any{
+			"services": map[string]any{
+				"additional": []any{
+					map[string]any{
+						"selectorType": "rw",
+						"serviceTemplate": map[string]any{
+							"metadata": serviceMetadata,
+							"spec": map[string]any{
+								"type": string(spec.Expose.Type),
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
 	if spec.Monitoring.EnablePodMonitor {
 		// CNPG always creates the PodMonitor in the same namespace as the
 		// Cluster, so this is inherently namespace-scoped monitoring.

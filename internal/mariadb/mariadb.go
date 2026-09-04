@@ -124,6 +124,18 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.MariaDBCluster, name, namespace, o
 		clusterSpec["resources"] = resources
 	}
 
+	if spec.Expose != nil {
+		service := map[string]any{"type": string(spec.Expose.Type)}
+		if len(spec.Expose.Annotations) > 0 {
+			annotations := make(map[string]any, len(spec.Expose.Annotations))
+			for k, v := range spec.Expose.Annotations {
+				annotations[k] = v
+			}
+			service["metadata"] = map[string]any{"annotations": annotations}
+		}
+		clusterSpec["service"] = service
+	}
+
 	if spec.Monitoring.EnablePodMonitor {
 		// mariadb-operator creates the ServiceMonitor in the same namespace
 		// as the MariaDB, so this is inherently namespace-scoped monitoring.

@@ -39,6 +39,11 @@ const (
 	Version      = "v1beta1"
 	Kind         = "Grafana"
 	FieldManager = "grafanainstance-operator"
+
+	// specKey is the "spec" map key shared by every nested
+	// {metadata,spec}-shaped block (deployment, ingress,
+	// persistentVolumeClaim) BuildManifest assembles below.
+	specKey = "spec"
 )
 
 // GVK is the GroupVersionKind of the grafana-operator Grafana this operator
@@ -70,12 +75,42 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.GrafanaInstance, name, namespace, 
 
 	grafanaSpec := map[string]any{
 		"deployment": map[string]any{
-			"spec": deploymentSpec,
+			specKey: deploymentSpec,
 		},
 	}
 
 	if spec.Version != "" {
 		grafanaSpec["version"] = spec.Version
+	}
+
+	if spec.Ingress != nil {
+		ingress := spec.Ingress
+		ingressSpec := map[string]any{
+			"rules": []any{
+				map[string]any{"host": ingress.Host},
+			},
+		}
+		if ingress.IngressClassName != "" {
+			ingressSpec["ingressClassName"] = ingress.IngressClassName
+		}
+		if ingress.TLSSecretName != "" {
+			ingressSpec["tls"] = []any{
+				map[string]any{
+					"hosts":      []any{ingress.Host},
+					"secretName": ingress.TLSSecretName,
+				},
+			}
+		}
+
+		grafanaIngress := map[string]any{specKey: ingressSpec}
+		if len(ingress.Annotations) > 0 {
+			annotations := make(map[string]any, len(ingress.Annotations))
+			for k, v := range ingress.Annotations {
+				annotations[k] = v
+			}
+			grafanaIngress["metadata"] = map[string]any{"annotations": annotations}
+		}
+		grafanaSpec["ingress"] = grafanaIngress
 	}
 
 	if spec.Persistence != nil {
@@ -91,7 +126,7 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.GrafanaInstance, name, namespace, 
 			pvcSpec["storageClassName"] = spec.Persistence.StorageClass
 		}
 		grafanaSpec["persistentVolumeClaim"] = map[string]any{
-			"spec": pvcSpec,
+			specKey: pvcSpec,
 		}
 	}
 

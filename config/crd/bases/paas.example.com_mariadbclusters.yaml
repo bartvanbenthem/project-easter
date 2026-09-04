@@ -67,6 +67,27 @@ spec:
                 - name
                 - owner
                 type: object
+              expose:
+                description: |-
+                  expose changes the type of the underlying MariaDB's own primary
+                  Service (spec.service.type) so it is reachable outside the cluster --
+                  no separate Service object is created by this operator.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      annotations are copied verbatim onto the generated/underlying Service,
+                      e.g. cloud load-balancer tuning annotations.
+                    type: object
+                  type:
+                    default: LoadBalancer
+                    description: type is the Service type to create.
+                    enum:
+                    - LoadBalancer
+                    - NodePort
+                    type: string
+                type: object
               image:
                 description: |-
                   image is the full container image reference ("<image>:<tag>") for the

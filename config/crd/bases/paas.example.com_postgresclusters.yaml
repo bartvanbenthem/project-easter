@@ -68,6 +68,27 @@ spec:
                 - name
                 - owner
                 type: object
+              expose:
+                description: |-
+                  expose creates an externally-reachable Service for the primary
+                  (read-write) endpoint, via CNPG's own spec.managed.services.additional
+                  -- no separate Service object is created by this operator.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      annotations are copied verbatim onto the generated/underlying Service,
+                      e.g. cloud load-balancer tuning annotations.
+                    type: object
+                  type:
+                    default: LoadBalancer
+                    description: type is the Service type to create.
+                    enum:
+                    - LoadBalancer
+                    - NodePort
+                    type: string
+                type: object
               image:
                 description: |-
                   image is the full container image reference for the PostgreSQL instances.

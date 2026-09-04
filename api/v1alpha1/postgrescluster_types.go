@@ -60,6 +60,12 @@ type PostgresClusterSpec struct {
 	// CNPG Cluster.
 	// +optional
 	Monitoring MonitoringSpec `json:"monitoring,omitzero"`
+
+	// expose creates an externally-reachable Service for the primary
+	// (read-write) endpoint, via CNPG's own spec.managed.services.additional
+	// -- no separate Service object is created by this operator.
+	// +optional
+	Expose *ServiceExposeSpec `json:"expose,omitempty"`
 }
 
 // MonitoringSpec configures Prometheus metrics collection for a managed

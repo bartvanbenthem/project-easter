@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -138,6 +139,51 @@ var _ = Describe("RabbitMQCluster Controller", func() {
 			cond := meta.FindStatusCondition(withStatus.Status.Conditions, "Ready")
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		})
+
+		It("should create and prune an Ingress as .spec.ingress is set and unset", func() {
+			controllerReconciler := &RabbitMQClusterReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: events.NewFakeRecorder(10),
+				Adapter:  rabbitmq.Adapter{},
+				Name:     RabbitMQClusterControllerName,
+			}
+
+			By("reconciling twice with no ingress requested")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			ingressName := types.NamespacedName{Name: resourceName + "-ingress", Namespace: resourceNamespace}
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, ingressName, &networkingv1.Ingress{}))).To(BeTrue())
+
+			By("setting .spec.ingress and reconciling")
+			var resource paasv1alpha1.RabbitMQCluster
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &resource)).To(Succeed())
+			resource.Spec.Ingress = &paasv1alpha1.IngressSpec{Host: "rabbitmq.example.com"}
+			Expect(k8sClient.Update(ctx, &resource)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			var ing networkingv1.Ingress
+			Expect(k8sClient.Get(ctx, ingressName, &ing)).To(Succeed())
+			Expect(ing.Spec.Rules).To(HaveLen(1))
+			Expect(ing.Spec.Rules[0].Host).To(Equal("rabbitmq.example.com"))
+			Expect(ing.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name).To(Equal(resourceName))
+			Expect(ing.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Port.Number).To(Equal(int32(15672)))
+
+			By("unsetting .spec.ingress and reconciling again")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &resource)).To(Succeed())
+			resource.Spec.Ingress = nil
+			Expect(k8sClient.Update(ctx, &resource)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, ingressName, &networkingv1.Ingress{}))).To(BeTrue())
 		})
 	})
 })

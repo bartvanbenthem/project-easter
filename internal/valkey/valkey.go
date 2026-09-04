@@ -37,7 +37,26 @@ const (
 	Version      = "v1alpha1"
 	Kind         = "ValkeyCluster"
 	FieldManager = "valkeycluster-operator"
+
+	// dataPort is Valkey's data-plane (RESP) port.
+	dataPort = 6379
+
+	// clusterSelectorLabel is the label valkey-operator itself applies to
+	// every pod (and its own headless Service's selector) belonging to one
+	// ValkeyCluster. Unlike CNPG/mariadb-operator/the Prometheus Operator,
+	// valkey-operator has no documented public contract for this -- it was
+	// confirmed by reading internal/controller/valkeycluster_controller.go
+	// in github.com/valkey-io/valkey-operator (LabelCluster = "valkey.io/cluster"),
+	// not from any published API guarantee. It may need re-checking after a
+	// valkey-operator upgrade.
+	clusterSelectorLabel = "valkey.io/cluster"
 )
+
+// externalServiceGVK is the GroupVersionKind of the Service this operator
+// creates to expose a ValkeyCluster outside the cluster: valkey-operator's
+// own generated Service is headless (ClusterIP: None), which can't be a
+// LoadBalancer/NodePort, so a separate Service is required.
+var externalServiceGVK = schema.GroupVersionKind{Version: "v1", Kind: "Service"}
 
 // GVK is the GroupVersionKind of the valkey-operator ValkeyCluster this
 // operator manages.
@@ -116,6 +135,43 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.ValkeyCluster, name, namespace, ow
 	u.Object["spec"] = clusterSpec
 
 	return u
+}
+
+// ExtraResources builds the LoadBalancer/NodePort Service exposing the
+// cluster's data-plane port outside the cluster, when requested. Implements
+// reconciler.ExtraResourcesAdapter[paasv1alpha1.ValkeyCluster, *paasv1alpha1.ValkeyCluster].
+func (Adapter) ExtraResources(cr *paasv1alpha1.ValkeyCluster, targetName, namespace, owner string) []reconciler.ExtraResource {
+	name := targetName + "-external"
+
+	expose := cr.Spec.Expose
+	if expose == nil {
+		return []reconciler.ExtraResource{
+			{GVK: externalServiceGVK, Name: name, Desired: nil},
+		}
+	}
+
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(externalServiceGVK)
+	u.SetName(name)
+	u.SetNamespace(namespace)
+	u.SetLabels(map[string]string{
+		"app.kubernetes.io/managed-by": FieldManager,
+		"paas.example.com/owner":       owner,
+	})
+	if len(expose.Annotations) > 0 {
+		u.SetAnnotations(expose.Annotations)
+	}
+	u.Object["spec"] = map[string]any{
+		"type":     string(expose.Type),
+		"selector": map[string]any{clusterSelectorLabel: targetName},
+		"ports": []any{
+			map[string]any{"name": "valkey", "port": int64(dataPort), "targetPort": int64(dataPort)},
+		},
+	}
+
+	return []reconciler.ExtraResource{
+		{GVK: externalServiceGVK, Name: name, Desired: u},
+	}
 }
 
 // ExtractStatus pulls state/shards/readyShards out of a ValkeyCluster's

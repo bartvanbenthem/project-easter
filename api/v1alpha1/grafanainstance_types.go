@@ -48,6 +48,13 @@ type GrafanaInstanceSpec struct {
 	// requested and Grafana runs with ephemeral storage.
 	// +optional
 	Persistence *PersistenceSpec `json:"persistence,omitempty"`
+
+	// ingress exposes Grafana's web UI outside the cluster. Applied directly
+	// as the underlying Grafana's own spec.ingress -- grafana-operator wires
+	// the backend to its own generated Service itself, so no separate
+	// Ingress object is created by this operator.
+	// +optional
+	Ingress *IngressSpec `json:"ingress,omitempty"`
 }
 
 // GrafanaInstanceStatus defines the observed state of GrafanaInstance.

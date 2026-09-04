@@ -24,15 +24,21 @@ import (
 	paasv1alpha1 "github.com/bartvanbenthem/paas-operator/api/v1alpha1"
 )
 
-func TestBuildManifestMonitoring(t *testing.T) {
-	baseSpec := paasv1alpha1.MariaDBClusterSpec{
+// baseSpec returns a minimal, valid MariaDBClusterSpec shared across this
+// file's tests as a starting point.
+func baseSpec() paasv1alpha1.MariaDBClusterSpec {
+	return paasv1alpha1.MariaDBClusterSpec{
 		Replicas: 1,
 		Storage:  paasv1alpha1.StorageSpec{Size: "1Gi"},
 		Database: paasv1alpha1.DatabaseSpec{Name: "app", Owner: "app"},
 	}
+}
+
+func TestBuildManifestMonitoring(t *testing.T) {
+	base := baseSpec()
 
 	t.Run("disabled leaves spec.metrics unset", func(t *testing.T) {
-		cr := &paasv1alpha1.MariaDBCluster{Spec: baseSpec}
+		cr := &paasv1alpha1.MariaDBCluster{Spec: base}
 		u := Adapter{}.BuildManifest(cr, "test", "default", "test")
 
 		if _, found, _ := unstructured.NestedMap(u.Object, "spec", "metrics"); found {
@@ -41,7 +47,7 @@ func TestBuildManifestMonitoring(t *testing.T) {
 	})
 
 	t.Run("enabled sets namespace-scoped ServiceMonitor", func(t *testing.T) {
-		spec := baseSpec
+		spec := base
 		spec.Monitoring = paasv1alpha1.MonitoringSpec{EnablePodMonitor: true}
 		cr := &paasv1alpha1.MariaDBCluster{Spec: spec}
 
@@ -64,6 +70,38 @@ func TestBuildManifestMonitoring(t *testing.T) {
 		// namespace is what makes this monitoring namespace-scoped.
 		if ns := u.GetNamespace(); ns != "default" {
 			t.Fatalf("expected MariaDB namespace %q, got %q", "default", ns)
+		}
+	})
+}
+
+func TestBuildManifestExpose(t *testing.T) {
+	base := baseSpec()
+
+	t.Run("unset leaves spec.service unset", func(t *testing.T) {
+		cr := &paasv1alpha1.MariaDBCluster{Spec: base}
+		u := Adapter{}.BuildManifest(cr, "test", "default", "test")
+
+		if _, found, _ := unstructured.NestedMap(u.Object, "spec", "service"); found {
+			t.Fatalf("expected no spec.service when Expose is unset")
+		}
+	})
+
+	t.Run("set changes the primary Service's type", func(t *testing.T) {
+		spec := base
+		spec.Expose = &paasv1alpha1.ServiceExposeSpec{
+			Type:        "LoadBalancer",
+			Annotations: map[string]string{"cloud.example.com/lb": "internal"},
+		}
+		cr := &paasv1alpha1.MariaDBCluster{Spec: spec}
+		u := Adapter{}.BuildManifest(cr, "test", "default", "test")
+
+		svcType, _, _ := unstructured.NestedString(u.Object, "spec", "service", "type")
+		if svcType != "LoadBalancer" {
+			t.Fatalf("expected spec.service.type LoadBalancer, got %q", svcType)
+		}
+		ann, _, _ := unstructured.NestedString(u.Object, "spec", "service", "metadata", "annotations", "cloud.example.com/lb")
+		if ann != "internal" {
+			t.Fatalf("expected annotation to be copied through, got %q", ann)
 		}
 	})
 }

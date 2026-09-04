@@ -54,6 +54,29 @@ spec:
           spec:
             description: spec defines the desired state of ValkeyCluster
             properties:
+              expose:
+                description: |-
+                  expose creates an externally-reachable Service for the cluster's
+                  data-plane port (6379). The valkey-operator has no native
+                  externally-reachable Service of its own (its only generated Service is
+                  headless/ClusterIP), so when set this operator also creates and
+                  manages a separate LoadBalancer/NodePort Service.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      annotations are copied verbatim onto the generated/underlying Service,
+                      e.g. cloud load-balancer tuning annotations.
+                    type: object
+                  type:
+                    default: LoadBalancer
+                    description: type is the Service type to create.
+                    enum:
+                    - LoadBalancer
+                    - NodePort
+                    type: string
+                type: object
               image:
                 description: |-
                   image is the full container image reference for the Valkey instances.

@@ -21,6 +21,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -138,6 +140,57 @@ var _ = Describe("PrometheusInstance Controller", func() {
 			cond := meta.FindStatusCondition(withStatus.Status.Conditions, "Ready")
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		})
+
+		It("should create and prune a Service and Ingress as .spec.ingress is set and unset", func() {
+			controllerReconciler := &PrometheusInstanceReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: events.NewFakeRecorder(10),
+				Adapter:  prometheus.Adapter{},
+				Name:     PrometheusInstanceControllerName,
+			}
+
+			By("reconciling twice with no ingress requested")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			serviceName := types.NamespacedName{Name: resourceName + "-web", Namespace: resourceNamespace}
+			ingressName := types.NamespacedName{Name: resourceName + "-ingress", Namespace: resourceNamespace}
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, serviceName, &corev1.Service{}))).To(BeTrue())
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, ingressName, &networkingv1.Ingress{}))).To(BeTrue())
+
+			By("setting .spec.ingress and reconciling")
+			var resource paasv1alpha1.PrometheusInstance
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &resource)).To(Succeed())
+			resource.Spec.Ingress = &paasv1alpha1.IngressSpec{Host: "prometheus.example.com"}
+			Expect(k8sClient.Update(ctx, &resource)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			var svc corev1.Service
+			Expect(k8sClient.Get(ctx, serviceName, &svc)).To(Succeed())
+			Expect(svc.Spec.Selector).To(HaveKeyWithValue("operator.prometheus.io/name", resourceName))
+
+			var ing networkingv1.Ingress
+			Expect(k8sClient.Get(ctx, ingressName, &ing)).To(Succeed())
+			Expect(ing.Spec.Rules).To(HaveLen(1))
+			Expect(ing.Spec.Rules[0].Host).To(Equal("prometheus.example.com"))
+			Expect(ing.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name).To(Equal(serviceName.Name))
+
+			By("unsetting .spec.ingress and reconciling again")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &resource)).To(Succeed())
+			resource.Spec.Ingress = nil
+			Expect(k8sClient.Update(ctx, &resource)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, serviceName, &corev1.Service{}))).To(BeTrue())
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, ingressName, &networkingv1.Ingress{}))).To(BeTrue())
 		})
 	})
 })
