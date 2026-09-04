@@ -59,6 +59,11 @@ type MariaDBClusterSpec struct {
 	// MariaDB containers.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitzero"`
+
+	// monitoring configures Prometheus metrics collection for the underlying
+	// MariaDB.
+	// +optional
+	Monitoring MonitoringSpec `json:"monitoring,omitzero"`
 }
 
 // MariaDBClusterStatus defines the observed state of MariaDBCluster.

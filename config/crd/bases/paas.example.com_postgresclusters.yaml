@@ -80,6 +80,21 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
+              monitoring:
+                description: |-
+                  monitoring configures Prometheus metrics collection for the underlying
+                  CNPG Cluster.
+                properties:
+                  enablePodMonitor:
+                    default: true
+                    description: |-
+                      enablePodMonitor creates namespace-scoped Prometheus scrape config
+                      (a PodMonitor or ServiceMonitor, depending on what the underlying
+                      vendor operator supports) for this resource, in the same namespace as
+                      the resource itself. Enabled by default. Requires the Prometheus
+                      Operator's PodMonitor/ServiceMonitor CRDs to be installed.
+                    type: boolean
+                type: object
               resources:
                 description: |-
                   resources are the optional compute resource requests/limits for the

@@ -5,4 +5,5 @@ resources:
 - paas_v1alpha1_grafanainstance.yaml
 - paas_v1alpha1_mariadbcluster.yaml
 - paas_v1alpha1_rabbitmqcluster.yaml
+- paas_v1alpha1_prometheusinstance.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

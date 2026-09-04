@@ -36,11 +36,24 @@ rules:
   - update
   - watch
 - apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - prometheuses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - paas.example.com
   resources:
   - grafanainstances
   - mariadbclusters
   - postgresclusters
+  - prometheusinstances
   - rabbitmqclusters
   - valkeyclusters
   verbs:
@@ -57,6 +70,7 @@ rules:
   - grafanainstances/finalizers
   - mariadbclusters/finalizers
   - postgresclusters/finalizers
+  - prometheusinstances/finalizers
   - rabbitmqclusters/finalizers
   - valkeyclusters/finalizers
   verbs:
@@ -67,6 +81,7 @@ rules:
   - grafanainstances/status
   - mariadbclusters/status
   - postgresclusters/status
+  - prometheusinstances/status
   - rabbitmqclusters/status
   - valkeyclusters/status
   verbs:

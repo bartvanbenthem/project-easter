@@ -107,6 +107,14 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.PostgresCluster, name, namespace, 
 		clusterSpec["resources"] = resources
 	}
 
+	if spec.Monitoring.EnablePodMonitor {
+		// CNPG always creates the PodMonitor in the same namespace as the
+		// Cluster, so this is inherently namespace-scoped monitoring.
+		clusterSpec["monitoring"] = map[string]any{
+			"enablePodMonitor": true,
+		}
+	}
+
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(GVK)
 	u.SetName(name)

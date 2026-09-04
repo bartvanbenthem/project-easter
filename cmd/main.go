@@ -208,6 +208,12 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", controller.RabbitMQClusterControllerName)
 		os.Exit(1)
 	}
+	if err := controller.NewPrometheusInstanceReconciler(
+		mgr.GetClient(), mgr.GetScheme(), mgr.GetEventRecorder("prometheusinstance-operator"),
+	).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", controller.PrometheusInstanceControllerName)
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

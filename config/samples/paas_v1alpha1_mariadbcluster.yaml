@@ -15,6 +15,8 @@ spec:
   database:
     name: app
     owner: app
+  monitoring:
+    enablePodMonitor: true
   resources:
     requests:
       cpu: "500m"

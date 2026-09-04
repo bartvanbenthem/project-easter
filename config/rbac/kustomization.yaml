@@ -37,4 +37,7 @@ resources:
 - postgrescluster_admin_role.yaml
 - postgrescluster_editor_role.yaml
 - postgrescluster_viewer_role.yaml
+- prometheusinstance_admin_role.yaml
+- prometheusinstance_editor_role.yaml
+- prometheusinstance_viewer_role.yaml
 

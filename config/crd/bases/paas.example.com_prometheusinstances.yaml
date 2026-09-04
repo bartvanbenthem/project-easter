@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: mariadbclusters.paas.example.com
+  name: prometheusinstances.paas.example.com
 spec:
   group: paas.example.com
   names:
-    kind: MariaDBCluster
-    listKind: MariaDBClusterList
-    plural: mariadbclusters
+    kind: PrometheusInstance
+    listKind: PrometheusInstanceList
+    plural: prometheusinstances
     shortNames:
-    - mdc
-    singular: mariadbcluster
+    - promi
+    singular: prometheusinstance
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -32,7 +32,8 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: MariaDBCluster is the Schema for the mariadbclusters API
+        description: PrometheusInstance is the Schema for the prometheusinstances
+          API
         properties:
           apiVersion:
             description: |-
@@ -52,56 +53,18 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of MariaDBCluster
+            description: spec defines the desired state of PrometheusInstance
             properties:
-              database:
-                description: database is the bootstrap database created on first startup.
-                properties:
-                  name:
-                    description: name of the database created by initdb.
-                    type: string
-                  owner:
-                    description: owner is the owning role of the bootstrap database.
-                    type: string
-                required:
-                - name
-                - owner
-                type: object
-              image:
-                description: |-
-                  image is the full container image reference ("<image>:<tag>") for the
-                  MariaDB instances. Defaults to mariadb-operator's own default image
-                  when unset.
-                type: string
-              monitoring:
-                description: |-
-                  monitoring configures Prometheus metrics collection for the underlying
-                  MariaDB.
-                properties:
-                  enablePodMonitor:
-                    default: true
-                    description: |-
-                      enablePodMonitor creates namespace-scoped Prometheus scrape config
-                      (a PodMonitor or ServiceMonitor, depending on what the underlying
-                      vendor operator supports) for this resource, in the same namespace as
-                      the resource itself. Enabled by default. Requires the Prometheus
-                      Operator's PodMonitor/ServiceMonitor CRDs to be installed.
-                    type: boolean
-                type: object
               replicas:
                 default: 1
-                description: |-
-                  replicas is the number of MariaDB instances. Values greater than 1
-                  enable Galera Cluster (synchronous multi-primary replication) so the
-                  cluster tolerates node loss; 1 runs a single standalone instance.
-                  mariadb-operator requires an odd count when greater than 1.
+                description: replicas is the number of Prometheus pods to run.
                 format: int32
-                minimum: 1
+                minimum: 0
                 type: integer
               resources:
                 description: |-
                   resources are the optional compute resource requests/limits for the
-                  MariaDB containers.
+                  Prometheus container.
                 properties:
                   claims:
                     description: |-
@@ -159,8 +122,15 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              retention:
+                description: |-
+                  retention is how long to keep scraped metrics, e.g. "15d". Defaults to
+                  the Prometheus Operator's own default (24h) when unset.
+                type: string
               storage:
-                description: storage settings for each instance's data volume.
+                description: |-
+                  storage settings for Prometheus's TSDB volume. When unset, no PVC is
+                  requested and Prometheus runs with ephemeral storage.
                 properties:
                   size:
                     description: size is the volume size, e.g. "10Gi".
@@ -172,16 +142,19 @@ spec:
                 required:
                 - size
                 type: object
-            required:
-            - database
-            - storage
+              version:
+                description: |-
+                  version sets the tag of the default quay.io/prometheus/prometheus
+                  image. Defaults to the Prometheus Operator's own default version when
+                  unset.
+                type: string
             type: object
           status:
-            description: status defines the observed state of MariaDBCluster
+            description: status defines the observed state of PrometheusInstance
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the MariaDBCluster resource.
+                  conditions represent the current state of the PrometheusInstance resource.
                   Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
                   Standard condition types include:
@@ -254,23 +227,20 @@ spec:
                 type: string
               phase:
                 description: |-
-                  phase is the reason of the underlying MariaDB's "Ready" condition
-                  (mariadb-operator has no separate status.phase field).
+                  phase is a short human-readable summary derived from the underlying
+                  Prometheus's status (it has no single phase field of its own).
                 type: string
               ready:
                 description: |-
-                  ready is true once the underlying MariaDB reports its "Ready"
-                  condition as True.
+                  ready is true once the underlying Prometheus reports all replicas
+                  available.
                 type: boolean
               readyReplicas:
-                description: |-
-                  readyReplicas is derived, not a verbatim field: mariadb-operator
-                  doesn't report a separate ready count, so this is replicas when the
-                  "Ready" condition is True, 0 otherwise.
+                description: readyReplicas is the underlying Prometheus's status.availableReplicas.
                 format: int32
                 type: integer
               replicas:
-                description: replicas is the underlying MariaDB's status.replicas.
+                description: replicas is the underlying Prometheus's status.replicas.
                 format: int32
                 type: integer
             type: object

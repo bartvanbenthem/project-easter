@@ -55,6 +55,26 @@ type PostgresClusterSpec struct {
 	// PostgreSQL containers.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitzero"`
+
+	// monitoring configures Prometheus metrics collection for the underlying
+	// CNPG Cluster.
+	// +optional
+	Monitoring MonitoringSpec `json:"monitoring,omitzero"`
+}
+
+// MonitoringSpec configures Prometheus metrics collection for a managed
+// resource. It is shared across every resource kind whose underlying vendor
+// operator natively supports it (currently PostgresCluster and
+// MariaDBCluster) so the toggle behaves the same way everywhere it appears.
+type MonitoringSpec struct {
+	// enablePodMonitor creates namespace-scoped Prometheus scrape config
+	// (a PodMonitor or ServiceMonitor, depending on what the underlying
+	// vendor operator supports) for this resource, in the same namespace as
+	// the resource itself. Enabled by default. Requires the Prometheus
+	// Operator's PodMonitor/ServiceMonitor CRDs to be installed.
+	// +kubebuilder:default=true
+	// +optional
+	EnablePodMonitor bool `json:"enablePodMonitor,omitempty"`
 }
 
 // StorageSpec describes the PGDATA volume for each instance.

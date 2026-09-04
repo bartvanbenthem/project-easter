@@ -124,6 +124,15 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.MariaDBCluster, name, namespace, o
 		clusterSpec["resources"] = resources
 	}
 
+	if spec.Monitoring.EnablePodMonitor {
+		// mariadb-operator creates the ServiceMonitor in the same namespace
+		// as the MariaDB, so this is inherently namespace-scoped monitoring.
+		clusterSpec["metrics"] = map[string]any{
+			"enabled":        true,
+			"serviceMonitor": map[string]any{},
+		}
+	}
+
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(GVK)
 	u.SetName(name)
