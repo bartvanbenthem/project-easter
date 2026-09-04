@@ -10,10 +10,12 @@ opinionated ones of our own. Each vendor gets its own thin CRD under
 [grafana/grafana-operator](https://github.com/grafana/grafana-operator)),
 `MariaDBCluster` (for
 [mariadb-operator](https://github.com/mariadb-operator/mariadb-operator)),
-and `RabbitMQCluster` (for the [RabbitMQ Cluster
-Operator](https://github.com/rabbitmq/cluster-operator)) — reconciled into a
-full vendor object, so consumers get a working
-Postgres/Valkey/Grafana/MariaDB/RabbitMQ instance from ~10 lines
+`RabbitMQCluster` (for the [RabbitMQ Cluster
+Operator](https://github.com/rabbitmq/cluster-operator)), and
+`PrometheusInstance` (for the [Prometheus
+Operator](https://github.com/prometheus-operator/prometheus-operator)) —
+reconciled into a full vendor object, so consumers get a working
+Postgres/Valkey/Grafana/MariaDB/RabbitMQ/Prometheus instance from ~10 lines
 of YAML instead of having to understand the vendor's much larger spec.
 
 ```yaml
@@ -68,6 +70,16 @@ spec:
   replicas: 3
   storage:
     size: 10Gi
+---
+apiVersion: paas.example.com/v1alpha1
+kind: PrometheusInstance
+metadata:
+  name: example-prometheus
+spec:
+  replicas: 1
+  retention: 15d
+  storage:
+    size: 10Gi
 ```
 
 ## How it works
@@ -85,15 +97,17 @@ type means writing the adapter, not another copy of the reconcile loop.
   interface — this is the one place the actual CRUD/reconciliation logic
   lives.
 - `internal/cnpg/cnpg.go`, `internal/valkey/valkey.go`,
-  `internal/grafana/grafana.go`, `internal/mariadb/mariadb.go`, and
-  `internal/rabbitmq/rabbitmq.go` — one `Adapter` implementation per vendor
-  object: the target `GroupVersionKind`, how to build the desired vendor
-  object from our CR's spec, and how to read phase/readiness back out of its
-  status. None of the vendors' Go API types or CRD schemas are vendored — we
-  don't own those CRDs, and their schemas are large and version-specific (see
+  `internal/grafana/grafana.go`, `internal/mariadb/mariadb.go`,
+  `internal/rabbitmq/rabbitmq.go`, and `internal/prometheus/prometheus.go` —
+  one `Adapter` implementation per vendor object: the target
+  `GroupVersionKind`, how to build the desired vendor object from our CR's
+  spec, and how to read phase/readiness back out of its status. None of the
+  vendors' Go API types or CRD schemas are vendored — we don't own those
+  CRDs, and their schemas are large and version-specific (see
   `crd-cnpg-v1.30.0.yaml`, `crd-valkey-v0.6.0.yaml`,
-  `crd-grafana-v5.25.0.yaml`, `crd-mariadb-operator-v26.6.0.yaml`, and
-  `crd-rabbitmq-cluster-operator-v2.22.5.yaml` at the repo root). Instead the
+  `crd-grafana-v5.25.0.yaml`, `crd-mariadb-operator-v26.6.0.yaml`,
+  `crd-rabbitmq-cluster-operator-v2.22.5.yaml`, and
+  `crd-prometheus-operator-v0.93.1.yaml` at the repo root). Instead the
   target is addressed purely through controller-runtime's dynamic client
   (`unstructured.Unstructured` + a `schema.GroupVersionKind`), and the
   desired object is built as a plain `map[string]any` applied via
@@ -101,15 +115,17 @@ type means writing the adapter, not another copy of the reconcile loop.
   the operator decoupled from any one vendor version.
 - `api/v1alpha1/postgrescluster_types.go` / `valkeycluster_types.go` /
   `grafanainstance_types.go` / `mariadbcluster_types.go` /
-  `rabbitmqcluster_types.go` — our own CRDs, scaffolded and generated the
-  normal kubebuilder way (`+kubebuilder:validation`/`+kubebuilder:printcolumn`
-  markers, `controller-gen` for the CRD YAML and deepcopy code).
+  `rabbitmqcluster_types.go` / `prometheusinstance_types.go` — our own CRDs,
+  scaffolded and generated the normal kubebuilder way
+  (`+kubebuilder:validation`/`+kubebuilder:printcolumn` markers,
+  `controller-gen` for the CRD YAML and deepcopy code).
 - `internal/controller/postgrescluster_controller.go` /
   `valkeycluster_controller.go` / `grafanainstance_controller.go` /
-  `mariadbcluster_controller.go` / `rabbitmqcluster_controller.go` — a few
-  lines each: they just instantiate `GenericReconciler` with the matching
-  adapter (`cnpg.Adapter{}` / `valkey.Adapter{}` / `grafana.Adapter{}` /
-  `mariadb.Adapter{}` / `rabbitmq.Adapter{}`) and register it with the
+  `mariadbcluster_controller.go` / `rabbitmqcluster_controller.go` /
+  `prometheusinstance_controller.go` — a few lines each: they just
+  instantiate `GenericReconciler` with the matching adapter (`cnpg.Adapter{}`
+  / `valkey.Adapter{}` / `grafana.Adapter{}` / `mariadb.Adapter{}` /
+  `rabbitmq.Adapter{}` / `prometheus.Adapter{}`) and register it with the
   manager. RBAC markers for both our own CRD and the vendor's live here.
 - One paas CR maps to exactly one same-named vendor object. On delete, the
   operator removes the vendor object before releasing its own finalizer, so
@@ -121,10 +137,11 @@ type means writing the adapter, not another copy of the reconcile loop.
   would remove the poll delay, if it's ever worth the complexity.
 - `internal/controller/testdata/crd/postgresql.cnpg.io_clusters.yaml`,
   `valkey.io_valkeyclusters.yaml`, `grafana.integreatly.org_grafanas.yaml`,
-  `k8s.mariadb.com_mariadbs.yaml`, and `rabbitmq.com_rabbitmqclusters.yaml`
-  are the real vendor CRDs, loaded into `envtest` so the controller tests
-  validate the generated objects against each vendor's actual OpenAPI
-  schema — not just against our own assumptions about its shape.
+  `k8s.mariadb.com_mariadbs.yaml`, `rabbitmq.com_rabbitmqclusters.yaml`, and
+  `monitoring.coreos.com_prometheuses.yaml` are the real vendor CRDs, loaded
+  into `envtest` so the controller tests validate the generated objects
+  against each vendor's actual OpenAPI schema — not just against our own
+  assumptions about its shape.
 
 ### Adding another vendor integration
 
@@ -164,7 +181,13 @@ synchronous multi-primary replication); `RabbitMQCluster` exposes `replicas`,
 `image`, `storage.size`, `storage.storageClass`, and optional `resources`
 (no bootstrap-database equivalent — the RabbitMQ Cluster Operator always
 creates a default vhost and user itself, writing credentials to a
-`<name>-default-user` Secret it manages). All
+`<name>-default-user` Secret it manages); `PrometheusInstance` exposes
+`version`, `replicas`, `retention`, optional `storage.size`/
+`storage.storageClass` (no PVC is requested when `storage` is unset —
+Prometheus runs with ephemeral storage), optional `resources`, and optional
+`ingress` (the Prometheus Operator creates no Service of its own for
+Prometheus, so setting `ingress` also makes this operator create a
+ClusterIP Service fronting it). All
 `resources` fields reuse `corev1.ResourceRequirements` directly, except
 `GrafanaInstance`, which doesn't expose one: the real field lives deep
 inside `spec.deployment.spec.template.spec.containers[].resources` (keyed by
@@ -175,8 +198,9 @@ monitoring, affinity, pooling, superuser secret, etc.; Valkey's TLS, ACLs,
 exporter, pod disruption budget, etc.; Grafana's ingress/route, SMTP,
 plugins, jsonnet, service accounts, etc.; mariadb-operator's TLS,
 replication (non-Galera), MaxScale, backups, etc.; the RabbitMQ Cluster
-Operator's TLS, plugins, definitions import, affinity, etc.) is left at
-that vendor's own defaults. Extending
+Operator's TLS, plugins, definitions import, affinity, etc.; the Prometheus
+Operator's rule/scrape-config selectors, remote write, Alertmanager
+discovery, affinity, etc.) is left at that vendor's own defaults. Extending
 a mapping means adding a field to the CR's `*Spec` type in `api/v1alpha1/`,
 running `make manifests generate`, and threading it through that vendor's
 `BuildManifest` in `internal/<vendor>/`.
@@ -193,32 +217,41 @@ Notes on what's deliberately out of scope:
 - mariadb-operator also defines `Backup`/`Restore`/`Connection`/`Database`/
   `User`/`Grant`/`MaxScale` CRDs; this operator only targets `MariaDB`
   itself, the actual cluster.
+- the Prometheus Operator also defines `Alertmanager`/`ThanosRuler`/
+  `PrometheusAgent`/`ServiceMonitor`/`PodMonitor`/`Probe`/`PrometheusRule`
+  CRDs; this operator only targets `Prometheus` itself, the actual server —
+  `ServiceMonitor`/`PodMonitor` objects are expected to be created
+  separately (e.g. by CNPG's or mariadb-operator's own `MonitoringSpec`) and
+  are simply discovered via the empty selectors `BuildManifest` sets.
 
 ## Verified while building this
 
 `go build`, `go vet`, `make manifests`/`generate` (regenerates CRD YAML +
 deepcopy code via `controller-gen`), `make lint` (golangci-lint, 0 issues),
 and `make test` (a real `envtest` API server, with our CRDs and CNPG's,
-valkey-operator's, grafana-operator's, mariadb-operator's, and the RabbitMQ
-Cluster Operator's actual CRDs all loaded — see above) all pass; all five
-controller tests exercise finalizer-add, Server-Side Apply of the generated
-vendor object, and the status-mirroring logic end to end. Not run: anything
-against a live cluster with CNPG, valkey-operator, grafana-operator,
-mariadb-operator, or the RabbitMQ Cluster Operator actually installed and
-reconciling — do that before trusting this in anything real (the Grafana
-mapping in particular is untested against a live grafana-operator: the
+valkey-operator's, grafana-operator's, mariadb-operator's, the RabbitMQ
+Cluster Operator's, and the Prometheus Operator's actual CRDs all loaded —
+see above) all pass; all six controller tests exercise finalizer-add,
+Server-Side Apply of the generated vendor object, and the status-mirroring
+logic end to end. Not run: anything against a live cluster with CNPG,
+valkey-operator, grafana-operator, mariadb-operator, the RabbitMQ Cluster
+Operator, or the Prometheus Operator actually installed and reconciling —
+do that before trusting this in anything real (the Grafana mapping in
+particular is untested against a live grafana-operator: the
 `deployment.spec.replicas` and `persistentVolumeClaim` paths are correct
 per its CRD schema, but its actual reconciliation behavior hasn't been
-exercised end to end; same caveat for `MariaDBCluster`/`RabbitMQCluster`
-against a live mariadb-operator/RabbitMQ Cluster Operator).
+exercised end to end; same caveat for `MariaDBCluster`/`RabbitMQCluster`/
+`PrometheusInstance` against a live mariadb-operator/RabbitMQ Cluster
+Operator/Prometheus Operator).
 
 ## Installing the Dependency Operators
 
 paas-operator only ever talks to the vendor CRDs (CNPG's `Cluster`,
 valkey-operator's `ValkeyCluster`, grafana-operator's `Grafana`,
 mariadb-operator's `MariaDB`, the RabbitMQ Cluster Operator's
-`RabbitmqCluster`) via Server-Side Apply — it never installs the vendor
-operators themselves. Each one has to be running in the cluster *before*
+`RabbitmqCluster`, the Prometheus Operator's `Prometheus`) via Server-Side
+Apply — it never installs the vendor operators themselves. Each one has to
+be running in the cluster *before*
 paas-operator can reconcile anything, otherwise `BuildManifest`'s
 Server-Side Apply calls fail because the target CRD doesn't exist yet. Most
 ship a Helm chart; the RabbitMQ Cluster Operator ships a plain manifest
@@ -347,14 +380,53 @@ project's own recommended install path.
 this operator was built and tested against — the manifest above installs
 the matching `2.22.5` release.
 
+### Prometheus Operator (for `PrometheusInstance`)
+
+```sh
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm upgrade --install prometheus-operator prometheus-community/kube-prometheus-stack \
+  --version 89.2.0 -n prometheus-operator-system --create-namespace \
+  --set prometheus.enabled=false \
+  --set alertmanager.enabled=false \
+  --set grafana.enabled=false \
+  --set kubeStateMetrics.enabled=false \
+  --set nodeExporter.enabled=false
+```
+
+`kube-prometheus-stack` is the community-maintained chart for the
+Prometheus Operator itself — there's no separate lean "operator-only"
+chart — so the flags above turn off everything this operator doesn't need
+(the stack's own default Prometheus/Alertmanager, Grafana, and the
+exporters), leaving just the operator and its CRDs.
+
+Verify:
+
+```sh
+kubectl get pods -n prometheus-operator-system
+kubectl get crd prometheuses.monitoring.coreos.com
+```
+
+Manifest fallback (no Helm):
+
+```sh
+kubectl apply --server-side -f \
+  https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.93.1/bundle.yaml
+```
+
+`crd-prometheus-operator-v0.93.1.yaml` at the repo root is the CRD this
+operator was built and tested against — both routes above install the
+matching `0.93.1` release (`kube-prometheus-stack` `89.2.0` pins
+`appVersion: v0.93.1`).
+
 ### Once the dependency operators are up
 
 Install paas-operator's own CRDs and controller (see below), then the
 samples in `config/samples/` — `paas_v1alpha1_postgrescluster.yaml`,
 `paas_v1alpha1_valkeycluster.yaml`, `paas_v1alpha1_grafanainstance.yaml`,
-`paas_v1alpha1_mariadbcluster.yaml`, `paas_v1alpha1_rabbitmqcluster.yaml` —
-double as a smoke test that each dependency operator is reachable and
-correctly versioned.
+`paas_v1alpha1_mariadbcluster.yaml`, `paas_v1alpha1_rabbitmqcluster.yaml`,
+`paas_v1alpha1_prometheusinstance.yaml` — double as a smoke test that each
+dependency operator is reachable and correctly versioned.
 
 ## Getting Started
 
@@ -365,8 +437,8 @@ correctly versioned.
 - Access to a Kubernetes v1.11.3+ cluster.
 - The dependency operators installed — see "Installing the Dependency
   Operators" above — for whichever CRs (`PostgresCluster`, `ValkeyCluster`,
-  `GrafanaInstance`, `MariaDBCluster`, `RabbitMQCluster`) you plan to
-  create.
+  `GrafanaInstance`, `MariaDBCluster`, `RabbitMQCluster`,
+  `PrometheusInstance`) you plan to create.
 
 ### To Deploy on the cluster
 **Build and push your image to the location specified by `IMG`:**
