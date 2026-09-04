@@ -114,6 +114,19 @@ func (Adapter) BuildManifest(cr *paasv1alpha1.PrometheusInstance, name, namespac
 		// are never set.
 		"serviceMonitorSelector": map[string]any{},
 		"podMonitorSelector":     map[string]any{},
+		// Unlike kube-prometheus-stack's Helm chart, the bare Prometheus
+		// Operator does not default a pod securityContext -- leaving it
+		// unset means the pod runs with no fsGroup, so a freshly
+		// provisioned PVC (owned by root) never gets chowned and
+		// Prometheus panics trying to create /prometheus/queries.active.
+		// These are the same values kube-prometheus-stack has defaulted
+		// to for years.
+		"securityContext": map[string]any{
+			"fsGroup":      int64(2000),
+			"runAsGroup":   int64(2000),
+			"runAsNonRoot": true,
+			"runAsUser":    int64(1000),
+		},
 	}
 
 	if spec.Version != "" {
